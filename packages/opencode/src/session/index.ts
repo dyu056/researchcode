@@ -63,6 +63,7 @@ export namespace Session {
         : undefined
     const share = row.share_url ? { url: row.share_url } : undefined
     const revert = row.revert ?? undefined
+    const model = row.model_config ?? undefined
     return {
       id: row.id,
       slug: row.slug,
@@ -82,6 +83,7 @@ export namespace Session {
         compacting: row.time_compacting ?? undefined,
         archived: row.time_archived ?? undefined,
       },
+      model,
     }
   }
 
@@ -106,6 +108,7 @@ export namespace Session {
       time_updated: info.time.updated,
       time_compacting: info.time.compacting,
       time_archived: info.time.archived,
+      model_config: info.model ?? null,
     }
   }
 
@@ -155,6 +158,15 @@ export namespace Session {
           partID: PartID.zod.optional(),
           snapshot: z.string().optional(),
           diff: z.string().optional(),
+        })
+        .optional(),
+      // Model credentials for session-specific API access
+      model: z
+        .object({
+          apiKey: z.string().optional(),
+          apiEndpoint: z.string().optional(),
+          providerID: z.string().optional(),
+          modelName: z.string().optional(),
         })
         .optional(),
     })
@@ -223,6 +235,14 @@ export namespace Session {
         title: z.string().optional(),
         permission: Info.shape.permission,
         workspaceID: WorkspaceID.zod.optional(),
+        model: z
+          .object({
+            apiKey: z.string().optional(),
+            apiEndpoint: z.string().optional(),
+            providerID: z.string().optional(),
+            modelName: z.string().optional(),
+          })
+          .optional(),
       })
       .optional(),
     async (input) => {
@@ -232,6 +252,7 @@ export namespace Session {
         title: input?.title,
         permission: input?.permission,
         workspaceID: input?.workspaceID,
+        model: input?.model,
       })
     },
   )
@@ -301,6 +322,12 @@ export namespace Session {
     workspaceID?: WorkspaceID
     directory: string
     permission?: PermissionNext.Ruleset
+    model?: {
+      apiKey?: string
+      apiEndpoint?: string
+      providerID?: string
+      modelName?: string
+    }
   }) {
     const result: Info = {
       id: SessionID.descending(input.id),
@@ -316,6 +343,14 @@ export namespace Session {
         created: Date.now(),
         updated: Date.now(),
       },
+      model: input.model?.apiKey || input.model?.apiEndpoint || input.model?.providerID || input.model?.modelName
+        ? {
+            apiKey: input.model?.apiKey,
+            apiEndpoint: input.model?.apiEndpoint,
+            providerID: input.model?.providerID,
+            modelName: input.model?.modelName,
+          }
+        : undefined,
     }
     log.info("created", result)
     Database.use((db) => {

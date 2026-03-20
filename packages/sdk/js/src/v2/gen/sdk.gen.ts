@@ -131,6 +131,10 @@ import type {
   SessionPromptAsyncResponses,
   SessionPromptErrors,
   SessionPromptResponses,
+  SessionRelayErrors,
+  SessionRelayMessagesErrors,
+  SessionRelayMessagesResponses,
+  SessionRelayResponses,
   SessionRevertErrors,
   SessionRevertResponses,
   SessionShareErrors,
@@ -1296,6 +1300,12 @@ export class Session2 extends HeyApiClient {
       title?: string
       permission?: PermissionRuleset
       workspaceID?: string
+      model?: {
+        apiKey?: string
+        apiEndpoint?: string
+        providerID?: string
+        modelName?: string
+      }
     },
     options?: Options<never, ThrowOnError>,
   ) {
@@ -1310,6 +1320,7 @@ export class Session2 extends HeyApiClient {
             { in: "body", key: "title" },
             { in: "body", key: "permission" },
             { in: "body", key: "workspaceID" },
+            { in: "body", key: "model" },
           ],
         },
       ],
@@ -2184,6 +2195,83 @@ export class Session2 extends HeyApiClient {
       url: "/session/{sessionID}/unrevert",
       ...options,
       ...params,
+    })
+  }
+
+  /**
+   * Get relay messages
+   *
+   * Get all messages that were relayed to this session from other sessions.
+   */
+  public relayMessages<ThrowOnError extends boolean = false>(
+    parameters: {
+      sessionID: string
+      directory?: string
+      workspace?: string
+    },
+    options?: Options<never, ThrowOnError>,
+  ) {
+    const params = buildClientParams(
+      [parameters],
+      [
+        {
+          args: [
+            { in: "path", key: "sessionID" },
+            { in: "query", key: "directory" },
+            { in: "query", key: "workspace" },
+          ],
+        },
+      ],
+    )
+    return (options?.client ?? this.client).get<
+      SessionRelayMessagesResponses,
+      SessionRelayMessagesErrors,
+      ThrowOnError
+    >({
+      url: "/session/{sessionID}/relay",
+      ...options,
+      ...params,
+    })
+  }
+
+  /**
+   * Relay message to another session
+   *
+   * Send a message from one session to another for cross-session communication.
+   */
+  public relay<ThrowOnError extends boolean = false>(
+    parameters: {
+      sessionID: string
+      directory?: string
+      workspace?: string
+      targetSessionID?: string
+      content?: string
+    },
+    options?: Options<never, ThrowOnError>,
+  ) {
+    const params = buildClientParams(
+      [parameters],
+      [
+        {
+          args: [
+            { in: "path", key: "sessionID" },
+            { in: "query", key: "directory" },
+            { in: "query", key: "workspace" },
+            { in: "body", key: "targetSessionID" },
+            { in: "body", key: "content" },
+          ],
+        },
+      ],
+    )
+    return (options?.client ?? this.client).post<SessionRelayResponses, SessionRelayErrors, ThrowOnError>({
+      url: "/session/{sessionID}/relay",
+      ...options,
+      ...params,
+      headers: {
+        "Content-Type": "application/json",
+        ...options?.headers,
+        ...params.headers,
+      },
     })
   }
 }

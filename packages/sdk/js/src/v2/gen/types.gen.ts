@@ -843,6 +843,12 @@ export type Session = {
     snapshot?: string
     diff?: string
   }
+  model?: {
+    apiKey?: string
+    apiEndpoint?: string
+    providerID?: string
+    modelName?: string
+  }
 }
 
 export type EventSessionCreated = {
@@ -1706,6 +1712,12 @@ export type GlobalSession = {
     partID?: string
     snapshot?: string
     diff?: string
+  }
+  model?: {
+    apiKey?: string
+    apiEndpoint?: string
+    providerID?: string
+    modelName?: string
   }
   project: ProjectSummary | null
 }
@@ -2800,6 +2812,12 @@ export type SessionCreateData = {
     title?: string
     permission?: PermissionRuleset
     workspaceID?: string
+    model?: {
+      apiKey?: string
+      apiEndpoint?: string
+      providerID?: string
+      modelName?: string
+    }
   }
   path?: never
   query?: {
@@ -3749,6 +3767,90 @@ export type PermissionRespondResponses = {
 }
 
 export type PermissionRespondResponse = PermissionRespondResponses[keyof PermissionRespondResponses]
+
+export type SessionRelayMessagesData = {
+  body?: never
+  path: {
+    sessionID: string
+  }
+  query?: {
+    directory?: string
+    workspace?: string
+  }
+  url: "/session/{sessionID}/relay"
+}
+
+export type SessionRelayMessagesErrors = {
+  /**
+   * Bad request
+   */
+  400: BadRequestError
+  /**
+   * Not found
+   */
+  404: NotFoundError
+}
+
+export type SessionRelayMessagesError = SessionRelayMessagesErrors[keyof SessionRelayMessagesErrors]
+
+export type SessionRelayMessagesResponses = {
+  /**
+   * List of relayed messages
+   */
+  200: Array<{
+    messageID: string
+    sourceSessionTitle: string
+    content: string
+    timestamp: number
+  }>
+}
+
+export type SessionRelayMessagesResponse = SessionRelayMessagesResponses[keyof SessionRelayMessagesResponses]
+
+export type SessionRelayData = {
+  body?: {
+    /**
+     * The session ID to relay the message to
+     */
+    targetSessionID: string
+    /**
+     * The message content to relay
+     */
+    content: string
+  }
+  path: {
+    sessionID: string
+  }
+  query?: {
+    directory?: string
+    workspace?: string
+  }
+  url: "/session/{sessionID}/relay"
+}
+
+export type SessionRelayErrors = {
+  /**
+   * Bad request
+   */
+  400: BadRequestError
+  /**
+   * Not found
+   */
+  404: NotFoundError
+}
+
+export type SessionRelayError = SessionRelayErrors[keyof SessionRelayErrors]
+
+export type SessionRelayResponses = {
+  /**
+   * Message relayed successfully
+   */
+  200: {
+    success: boolean
+  }
+}
+
+export type SessionRelayResponse = SessionRelayResponses[keyof SessionRelayResponses]
 
 export type PermissionReplyData = {
   body?: {

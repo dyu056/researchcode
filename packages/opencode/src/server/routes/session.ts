@@ -1019,5 +1019,123 @@ export const SessionRoutes = lazy(() =>
         })
         return c.json(true)
       },
+    )
+    .post(
+      "/:sessionID/relay",
+      describeRoute({
+        summary: "Relay message to another session",
+        description: "Send a message from one session to another for cross-session communication.",
+        operationId: "session.relay",
+        responses: {
+          200: {
+            description: "Message relayed successfully",
+            content: {
+              "application/json": {
+                schema: resolver(z.object({ success: z.boolean() })),
+              },
+            },
+          },
+          ...errors(400, 404),
+        },
+      }),
+      validator(
+        "param",
+        z.object({
+          sessionID: SessionID.zod,
+        }),
+      ),
+      validator(
+        "json",
+        z.object({
+          targetSessionID: SessionID.zod.describe("The session ID to relay the message to"),
+          content: z.string().describe("The message content to relay"),
+        }),
+      ),
+      async (c) => {
+        const params = c.req.valid("param")
+        const body = c.req.valid("json")
+
+        // Verify source session exists
+        const sourceSession = await Session.get(params.sessionID)
+
+        // Verify target session exists
+        await Session.get(body.targetSessionID)
+
+        // Use SessionPrompt to send the relayed message to target session
+        // This creates a user message and triggers AI processing
+        await SessionPrompt.prompt({
+          sessionID: body.targetSessionID,
+          parts: [
+            {
+              type: "text",
+              text: `[Relay from "${sourceSession.title}"]:\n${body.content}`,
+            },
+          ],
+          noReply: true, // Don't wait for AI response, just queue the message
+        })
+
+        return c.json({ success: true })
+      },
+    )
+    .get(
+      "/:sessionID/relay",
+      describeRoute({
+        summary: "Get relay messages",
+        description: "Get all messages that were relayed to this session from other sessions.",
+        operationId: "session.relay_messages",
+        responses: {
+          200: {
+            description: "List of relayed messages",
+            content: {
+              "application/json": {
+                schema: resolver(
+                  z.array(
+                    z.object({
+                      messageID: MessageID.zod,
+                      sourceSessionTitle: z.string(),
+                      content: z.string(),
+                      timestamp: z.number(),
+                    }),
+                  ),
+                ),
+              },
+            },
+          },
+          ...errors(400, 404),
+        },
+      }),
+      validator(
+        "param",
+        z.object({
+          sessionID: SessionID.zod,
+        }),
+      ),
+      async (c) => {
+        const params = c.req.valid("param")
+
+        // Get all messages from this session that were relayed
+        const messages = await Session.messages({ sessionID: params.sessionID })
+        const relayedMessages = messages
+          .filter((msg) =>
+            msg.parts.some(
+              (part) => part.type === "text" && part.text.startsWith("[Relay from"),
+            ),
+          )
+          .map((msg) => {
+            const relayPart = msg.parts.find(
+              (part) => part.type === "text" && part.text.startsWith("[Relay from"),
+            )
+            const text = relayPart?.type === "text" ? relayPart.text : ""
+            const match = text.match(/\[Relay from "(.+?)"\]:\n(.+)/s)
+            return {
+              messageID: msg.info.id,
+              sourceSessionTitle: match ? match[1] : "Unknown",
+              content: match ? match[2] : text,
+              timestamp: msg.info.time.created,
+            }
+          })
+
+        return c.json(relayedMessages)
+      },
     ),
 )
