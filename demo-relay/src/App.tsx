@@ -43,13 +43,6 @@ interface Message {
   parts: MessagePart[]
 }
 
-interface RelayMessage {
-  messageID: string
-  sourceSessionTitle: string
-  content: string
-  timestamp: number
-}
-
 interface Folder {
   id: string
   name: string
@@ -95,7 +88,6 @@ export default function App() {
   const [serverVersion, setServerVersion] = useState('')
   const [messages, setMessages] = useState<Message[]>([])
   const [isLoading, setIsLoading] = useState(false)
-  const [relayMessages, setRelaysMessages] = useState<Map<string, RelayMessage[]>>(new Map())
 
   // New session form state
   const [showNewSessionForm, setShowNewSessionForm] = useState(false)
@@ -235,33 +227,6 @@ export default function App() {
     }
   }, [serverUrl, addRelayLog])
 
-  // Relay message to another session
-  const relayMessage = useCallback(async (fromSessionId: string, toSessionId: string, content: string) => {
-    const fromSession = sessions.get(fromSessionId)
-    const toSession = sessions.get(toSessionId)
-    if (!fromSession || !toSession) return
-
-    try {
-      await apiRequest(serverUrl, 'POST', `/session/${fromSessionId}/relay`, {
-        targetSessionID: toSessionId,
-        content,
-      })
-      addRelayLog(`[Relay] ${fromSession.title} -> ${toSession.title}: ${content.substring(0, 30)}...`)
-    } catch (error) {
-      addRelayLog(`Relay failed: ${error}`)
-    }
-  }, [serverUrl, sessions, addRelayLog])
-
-  // Fetch relay messages for a session
-  const fetchRelayMessages = useCallback(async (sessionId: string) => {
-    try {
-      const msgs = await apiRequest<RelayMessage[]>(serverUrl, 'GET', `/session/${sessionId}/relay`)
-      setRelaysMessages(prev => new Map(prev).set(sessionId, msgs))
-    } catch (error) {
-      addRelayLog(`Failed to fetch relay messages: ${error}`)
-    }
-  }, [serverUrl, addRelayLog])
-
   // Refresh sessions list
   const refreshSessions = useCallback(async () => {
     try {
@@ -299,11 +264,9 @@ export default function App() {
   useEffect(() => {
     if (!activeSessionId || !connected) return
     fetchMessages(activeSessionId)
-    fetchRelayMessages(activeSessionId)
-  }, [activeSessionId, connected, fetchMessages, fetchRelayMessages])
+  }, [activeSessionId, connected, fetchMessages])
 
   const activeSession = activeSessionId ? sessions.get(activeSessionId) : null
-  const activeRelayMessages = activeSessionId ? relayMessages.get(activeSessionId) || [] : []
 
   return (
     <div style={{ display: 'flex', height: '100vh', fontFamily: 'system-ui, sans-serif', background: '#0a0a0a', color: '#fff' }}>
@@ -420,7 +383,7 @@ export default function App() {
             </div>
 
             {/* Chat Messages */}
-            <div style={{ flex: 1, overflow: 'auto', padding: '16px' }}>
+            <div style={{ flex: 1, overflow: 'auto', padding: '16px', paddingBottom: '120px' }}>
               {messages.length === 0 ? (
                 <div style={{ color: '#666', textAlign: 'center', marginTop: '40%' }}>
                   No messages yet. Start a conversation!
@@ -548,7 +511,7 @@ export default function App() {
             </div>
 
             {/* Input */}
-            <div style={{ padding: '16px', borderTop: '1px solid #333' }}>
+            <div style={{ padding: '16px', paddingBottom: '120px', borderTop: '1px solid #333' }}>
               <div style={{ display: 'flex', gap: '8px' }}>
                 <input
                   type="text"
@@ -586,75 +549,24 @@ export default function App() {
         )}
       </div>
 
-      {/* Right Panel - Relay */}
-      <div style={{ width: '300px', borderLeft: '1px solid #333', display: 'flex', flexDirection: 'column' }}>
-        <div style={{ padding: '12px', borderBottom: '1px solid #333' }}>
-          <h3 style={{ fontSize: '13px', color: '#888' }}>🔄 RELAY</h3>
-        </div>
-
-        {/* Relay to another session */}
-        {activeSession && (
-          <div style={{ padding: '12px', borderBottom: '1px solid #333' }}>
-            <div style={{ fontSize: '11px', color: '#888', marginBottom: '8px' }}>Send to another session:</div>
-            <div style={{ display: 'flex', gap: '4px', marginBottom: '8px' }}>
-              <select
-                id="relay-target"
-                style={{ flex: 1, padding: '6px', background: '#1a1a1a', border: '1px solid #333', color: '#fff', borderRadius: '4px', fontSize: '12px' }}
-              >
-                <option value="">Select...</option>
-                {Array.from(sessions.values())
-                  .filter(s => s.id !== activeSession.id)
-                  .map(s => (
-                    <option key={s.id} value={s.id}>{s.title}</option>
-                  ))
-                }
-              </select>
-            </div>
-            <textarea
-              id="relay-content"
-              placeholder="Message to relay..."
-              style={{ width: '100%', padding: '8px', background: '#1a1a1a', border: '1px solid #333', color: '#fff', borderRadius: '4px', fontSize: '12px', minHeight: '60px', marginBottom: '8px' }}
-            />
-            <button
-              onClick={() => {
-                const targetSelect = document.getElementById('relay-target') as HTMLSelectElement
-                const contentArea = document.getElementById('relay-content') as HTMLTextAreaElement
-                if (targetSelect?.value && contentArea?.value) {
-                  relayMessage(activeSession.id, targetSelect.value, contentArea.value)
-                  contentArea.value = ''
-                }
-              }}
-              style={{ width: '100%', padding: '8px', background: '#8b5cf6', border: 'none', color: '#fff', cursor: 'pointer', borderRadius: '4px', fontSize: '12px' }}
-            >
-              Relay Message
-            </button>
-          </div>
-        )}
-
-        {/* Relay Messages Received */}
-        <div style={{ flex: 1, overflow: 'auto', padding: '12px' }}>
-          <div style={{ fontSize: '11px', color: '#888', marginBottom: '8px' }}>📨 Messages from other sessions:</div>
-          {activeRelayMessages.length === 0 ? (
-            <div style={{ color: '#666', fontSize: '12px' }}>No relay messages</div>
-          ) : (
-            activeRelayMessages.map((msg, idx) => (
-              <div key={idx} style={{ marginBottom: '12px', padding: '8px', background: '#1a1a1a', borderRadius: '4px' }}>
-                <div style={{ fontSize: '10px', color: '#888', marginBottom: '4px' }}>
-                  From: {msg.sourceSessionTitle}
-                </div>
-                <div style={{ fontSize: '12px' }}>{msg.content}</div>
-              </div>
-            ))
-          )}
-        </div>
-
-        {/* Relay Log */}
-        <div style={{ padding: '12px', borderTop: '1px solid #333', maxHeight: '150px', overflow: 'auto' }}>
-          <div style={{ fontSize: '11px', color: '#888', marginBottom: '4px' }}>📋 Log:</div>
-          {relayLog.slice(-10).map((log, i) => (
-            <div key={i} style={{ fontSize: '10px', color: '#22c55e', fontFamily: 'monospace' }}>{log}</div>
-          ))}
-        </div>
+      {/* Relay Log Footer */}
+      <div style={{
+        position: 'fixed',
+        bottom: 0,
+        left: '280px',
+        right: 0,
+        padding: '8px 16px',
+        background: '#1a1a1a',
+        borderTop: '1px solid #333',
+        maxHeight: '100px',
+        overflow: 'auto',
+        fontFamily: 'monospace',
+        fontSize: '11px',
+      }}>
+        <div style={{ fontSize: '10px', color: '#888', marginBottom: '4px' }}>📋 Log:</div>
+        {relayLog.slice(-20).map((log, i) => (
+          <div key={i} style={{ color: '#22c55e' }}>{log}</div>
+        ))}
       </div>
 
       {/* New Session Modal */}
