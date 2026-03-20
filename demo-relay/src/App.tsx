@@ -158,8 +158,8 @@ export default function App() {
     addRelayLog(`[Session] Sending: ${content.substring(0, 50)}...`)
 
     try {
-      // Send message via prompt endpoint (streaming)
-      const response = await fetch(`${serverUrl}/session/${sessionId}/prompt?directory=${encodeURIComponent(DEFAULT_DIRECTORY)}`, {
+      // Send message via prompt_async endpoint (non-blocking)
+      const response = await fetch(`${serverUrl}/session/${sessionId}/prompt_async?directory=${encodeURIComponent(DEFAULT_DIRECTORY)}`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -171,21 +171,10 @@ export default function App() {
         throw new Error(`Prompt error: ${response.status}`)
       }
 
-      // Read streaming response
-      const reader = response.body?.getReader()
-      if (!reader) throw new Error('No response body')
-
-      let fullResponse = ''
-      while (true) {
-        const { done, value } = await reader.read()
-        if (done) break
-        const text = new TextDecoder().decode(value)
-        fullResponse += text
-      }
-
       addRelayLog(`[Session] Response received`)
 
-      // Refresh messages after sending
+      // Wait a bit for the AI to process, then refresh messages
+      await new Promise(r => setTimeout(r, 5000))
       await fetchMessages(sessionId)
     } catch (error) {
       addRelayLog(`Failed to send message: ${error}`)
