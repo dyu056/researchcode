@@ -1,24 +1,41 @@
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect, useCallback, useRef } from 'react'
 
-// Types for the relay system
+// Types
 interface ModelConfig {
-  apiKey: string
-  apiEndpoint: string
-  modelName: string
+  apiKey?: string
+  apiEndpoint?: string
+  providerID?: string
+  modelName?: string
 }
 
 interface Session {
   id: string
   title: string
-  folderId: string
   model?: ModelConfig
-  messages: Message[]
-  status: 'idle' | 'running' | 'completed'
+  time: {
+    created: number
+    updated: number
+  }
+}
+
+interface MessagePart {
+  type: string
+  text?: string
+  [key: string]: any
 }
 
 interface Message {
-  id: string
-  role: 'user' | 'assistant'
+  info: {
+    id: string
+    role: string
+    time: { created: number; updated: number }
+  }
+  parts: MessagePart[]
+}
+
+interface RelayMessage {
+  messageID: string
+  sourceSessionTitle: string
   content: string
   timestamp: number
 }
@@ -29,7 +46,34 @@ interface Folder {
   sessionIds: string[]
 }
 
-// Demo Relay App
+const DEFAULT_DIRECTORY = '/Users/danielyu/Documents/claude_code_modifications/researchcode/packages/opencode'
+
+// API client helper
+async function apiRequest<T>(baseUrl: string, method: string, path: string, body?: any, directory: string = DEFAULT_DIRECTORY): Promise<T> {
+  const url = new URL(path, baseUrl)
+  if (method === 'GET' && directory) {
+    url.searchParams.set('directory', directory)
+  }
+
+  const options: RequestInit = {
+    method,
+    headers: {
+      'Content-Type': 'application/json',
+    },
+  }
+
+  if (body && (method === 'POST' || method === 'PATCH')) {
+    options.body = JSON.stringify(body)
+  }
+
+  const response = await fetch(url.toString(), options)
+  if (!response.ok) {
+    throw new Error(`API error: ${response.status} ${response.statusText}`)
+  }
+
+  return response.json()
+}
+
 export default function App() {
   const [serverUrl, setServerUrl] = useState('http://localhost:4096')
   const [connected, setConnected] = useState(false)
@@ -38,38 +82,117 @@ export default function App() {
   const [activeSessionId, setActiveSessionId] = useState<string | null>(null)
   const [inputValue, setInputValue] = useState('')
   const [relayLog, setRelayLog] = useState<string[]>([])
+  const [serverVersion, setServerVersion] = useState('')
+  const [messages, setMessages] = useState<Message[]>([])
+  const [isLoading, setIsLoading] = useState(false)
+  const [relayMessages, setRelaysMessages] = useState<Map<string, RelayMessage[]>>(new Map())
 
   // New session form state
   const [showNewSessionForm, setShowNewSessionForm] = useState(false)
   const [newSessionTitle, setNewSessionTitle] = useState('')
-  const [newSessionFolder, setNewSessionFolder] = useState('')
+  const [newSessionFolder, setNewSessionFolder] = useState('default')
   const [newModelApiKey, setNewModelApiKey] = useState('')
   const [newModelEndpoint, setNewModelEndpoint] = useState('')
   const [newModelName, setNewModelName] = useState('')
 
+  const messagesEndRef = useRef<HTMLDivElement>(null)
+
+  const addRelayLog = useCallback((message: string) => {
+    setRelayLog(prev => [...prev.slice(-99), `[${new Date().toLocaleTimeString()}] ${message}`])
+  }, [])
+
+  // Scroll to bottom of messages
+  const scrollToBottom = useCallback(() => {
+    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' })
+  }, [])
+
+  useEffect(() => {
+    scrollToBottom()
+  }, [messages, scrollToBottom])
+
   // Connect to OpenCode server
   const connectToServer = useCallback(async () => {
     try {
-      // In real implementation, this would use the SDK:
-      // const sdk = createOpencodeClient({ baseUrl: serverUrl })
-      // await sdk.health() - check if server is running
+      const health = await apiRequest<{ healthy: boolean; version: string }>(serverUrl, 'GET', '/global/health')
+      if (health.healthy) {
+        setConnected(true)
+        setServerVersion(health.version)
+        addRelayLog(`Connected to OpenCode server (${health.version})`)
 
-      // For demo, we simulate connection
-      setConnected(true)
-      addRelayLog('Connected to OpenCode server')
+        // Initialize default folder
+        setFolders([{ id: 'default', name: 'Default', sessionIds: [] }])
 
-      // Create default relay folder
-      const relayFolder: Folder = {
-        id: 'relay',
-        name: 'Relay Hub',
-        sessionIds: [],
+        // Load existing sessions
+        const listResult = await apiRequest<Session[]>(serverUrl, 'GET', '/session')
+        const sessionsMap = new Map<string, Session>()
+        for (const session of listResult) {
+          sessionsMap.set(session.id, session)
+        }
+        setSessions(sessionsMap)
+        setFolders(prev => prev.map(f => ({
+          ...f,
+          sessionIds: listResult.map(s => s.id)
+        })))
+        addRelayLog(`Loaded ${listResult.length} existing sessions`)
       }
-      setFolders([relayFolder])
-      addRelayLog('Relay folder initialized')
     } catch (error) {
       addRelayLog(`Connection failed: ${error}`)
     }
-  }, [serverUrl])
+  }, [serverUrl, addRelayLog])
+
+  // Fetch messages for a session
+  const fetchMessages = useCallback(async (sessionId: string) => {
+    try {
+      const msgs = await apiRequest<Message[]>(serverUrl, 'GET', `/session/${sessionId}/message`)
+      setMessages(msgs.reverse()) // oldest first for display
+    } catch (error) {
+      addRelayLog(`Failed to fetch messages: ${error}`)
+    }
+  }, [serverUrl, addRelayLog])
+
+  // Send message to session and get AI response
+  const sendMessage = useCallback(async (sessionId: string, content: string) => {
+    if (!content.trim()) return
+
+    setIsLoading(true)
+    addRelayLog(`[Session] Sending: ${content.substring(0, 50)}...`)
+
+    try {
+      // Send message via prompt endpoint (streaming)
+      const response = await fetch(`${serverUrl}/session/${sessionId}/prompt?directory=${encodeURIComponent(DEFAULT_DIRECTORY)}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          parts: [{ type: 'text', text: content }]
+        })
+      })
+
+      if (!response.ok) {
+        throw new Error(`Prompt error: ${response.status}`)
+      }
+
+      // Read streaming response
+      const reader = response.body?.getReader()
+      if (!reader) throw new Error('No response body')
+
+      let fullResponse = ''
+      while (true) {
+        const { done, value } = await reader.read()
+        if (done) break
+        const text = new TextDecoder().decode(value)
+        fullResponse += text
+      }
+
+      addRelayLog(`[Session] Response received`)
+
+      // Refresh messages after sending
+      await fetchMessages(sessionId)
+    } catch (error) {
+      addRelayLog(`Failed to send message: ${error}`)
+    } finally {
+      setIsLoading(false)
+    }
+  }, [serverUrl, addRelayLog, fetchMessages])
 
   // Create a new session
   const createSession = useCallback(async (config: {
@@ -77,107 +200,30 @@ export default function App() {
     folderId: string
     model?: ModelConfig
   }) => {
-    const sessionId = `session-${Date.now()}`
-
-    // In real implementation:
-    // const result = await sdk.session.create({
-    //   title: config.title,
-    //   // Would need to add model credentials to session creation
-    // })
-
-    const newSession: Session = {
-      id: sessionId,
-      title: config.title,
-      folderId: config.folderId,
-      model: config.model,
-      messages: [],
-      status: 'idle',
-    }
-
-    setSessions(prev => new Map(prev).set(sessionId, newSession))
-    setFolders(prev => prev.map(f =>
-      f.id === config.folderId
-        ? { ...f, sessionIds: [...f.sessionIds, sessionId] }
-        : f
-    ))
-
-    addRelayLog(`Session created: ${config.title} (${sessionId})`)
-    setActiveSessionId(sessionId)
-    return sessionId
-  }, [])
-
-  // Send message to session
-  const sendMessage = useCallback(async (sessionId: string, content: string) => {
-    const session = sessions.get(sessionId)
-    if (!session) return
-
-    // Add user message
-    const userMessage: Message = {
-      id: `msg-${Date.now()}`,
-      role: 'user',
-      content,
-      timestamp: Date.now(),
-    }
-
-    setSessions(prev => {
-      const updated = new Map(prev)
-      const s = updated.get(sessionId)!
-      updated.set(sessionId, {
-        ...s,
-        messages: [...s.messages, userMessage],
-        status: 'running',
-      })
-      return updated
-    })
-
-    addRelayLog(`[${session.title}] User: ${content.substring(0, 50)}...`)
-
-    // In real implementation:
-    // await sdk.session.prompt({
-    //   sessionID: sessionId,
-    //   parts: [{ type: 'text', text: content }],
-    // })
-
-    // Simulate AI response
-    setTimeout(() => {
-      const aiMessage: Message = {
-        id: `msg-${Date.now()}`,
-        role: 'assistant',
-        content: `[Demo] Received: ${content}\n\nIn real implementation, this would be the AI response from model: ${session.model?.modelName || 'default'}`,
-        timestamp: Date.now(),
+    try {
+      const body: any = { title: config.title }
+      if (config.model?.apiKey) {
+        body.model = {
+          apiKey: config.model.apiKey,
+          apiEndpoint: config.model.apiEndpoint,
+          providerID: config.model.providerID,
+          modelName: config.model.modelName,
+        }
       }
 
-      setSessions(prev => {
-        const updated = new Map(prev)
-        const s = updated.get(sessionId)!
-        updated.set(sessionId, {
-          ...s,
-          messages: [...s.messages, aiMessage],
-          status: 'idle',
-        })
-        return updated
-      })
-
-      addRelayLog(`[${session.title}] Assistant: Response generated`)
-    }, 1000)
-  }, [sessions])
-
-  // Spawn child session from parent
-  const spawnChildSession = useCallback(async (parentSessionId: string, childTitle: string) => {
-    const parent = sessions.get(parentSessionId)
-    if (!parent) return
-
-    // Create child in same folder or relay folder
-    const childFolderId = parent.folderId === 'relay' ? 'relay' : parent.folderId
-
-    await createSession({
-      title: childTitle,
-      folderId: childFolderId,
-      model: parent.model, // Inherit model config
-    })
-
-    addRelayLog(`[${parent.title}] Spawned child session: ${childTitle}`)
-  }, [sessions, createSession])
+      const newSession = await apiRequest<Session>(serverUrl, 'POST', '/session', body)
+      setSessions(prev => new Map(prev).set(newSession.id, newSession))
+      setFolders(prev => prev.map(f =>
+        f.id === config.folderId
+          ? { ...f, sessionIds: [...f.sessionIds, newSession.id] }
+          : f
+      ))
+      addRelayLog(`Session created: ${config.title} (${newSession.id.substring(0, 20)}...)`)
+      setActiveSessionId(newSession.id)
+    } catch (error) {
+      addRelayLog(`Failed to create session: ${error}`)
+    }
+  }, [serverUrl, addRelayLog])
 
   // Relay message to another session
   const relayMessage = useCallback(async (fromSessionId: string, toSessionId: string, content: string) => {
@@ -185,37 +231,53 @@ export default function App() {
     const toSession = sessions.get(toSessionId)
     if (!fromSession || !toSession) return
 
-    // In real implementation, this would write to a shared relay folder
-    // that all sessions can read from
-    addRelayLog(`[Relay] ${fromSession.title} -> ${toSession.title}: ${content.substring(0, 30)}...`)
-
-    // Simulate relay delivery
-    const relayMsg: Message = {
-      id: `msg-${Date.now()}`,
-      role: 'user',
-      content: `[Relay from ${fromSession.title}]: ${content}`,
-      timestamp: Date.now(),
-    }
-
-    setSessions(prev => {
-      const updated = new Map(prev)
-      const s = updated.get(toSessionId)!
-      updated.set(toSessionId, {
-        ...s,
-        messages: [...s.messages, relayMsg],
+    try {
+      await apiRequest(serverUrl, 'POST', `/session/${fromSessionId}/relay`, {
+        targetSessionID: toSessionId,
+        content,
       })
-      return updated
-    })
-  }, [sessions])
+      addRelayLog(`[Relay] ${fromSession.title} -> ${toSession.title}: ${content.substring(0, 30)}...`)
+    } catch (error) {
+      addRelayLog(`Relay failed: ${error}`)
+    }
+  }, [serverUrl, sessions, addRelayLog])
 
-  const addRelayLog = (message: string) => {
-    setRelayLog(prev => [...prev.slice(-99), `[${new Date().toLocaleTimeString()}] ${message}`])
-  }
+  // Fetch relay messages for a session
+  const fetchRelayMessages = useCallback(async (sessionId: string) => {
+    try {
+      const msgs = await apiRequest<RelayMessage[]>(serverUrl, 'GET', `/session/${sessionId}/relay`)
+      setRelaysMessages(prev => new Map(prev).set(sessionId, msgs))
+    } catch (error) {
+      addRelayLog(`Failed to fetch relay messages: ${error}`)
+    }
+  }, [serverUrl, addRelayLog])
+
+  // Refresh sessions list
+  const refreshSessions = useCallback(async () => {
+    try {
+      const listResult = await apiRequest<Session[]>(serverUrl, 'GET', '/session')
+      const sessionsMap = new Map<string, Session>()
+      for (const session of listResult) {
+        sessionsMap.set(session.id, session)
+      }
+      setSessions(sessionsMap)
+    } catch (error) {
+      addRelayLog(`Failed to refresh sessions: ${error}`)
+    }
+  }, [serverUrl, addRelayLog])
+
+  // Load messages when active session changes
+  useEffect(() => {
+    if (!activeSessionId || !connected) return
+    fetchMessages(activeSessionId)
+    fetchRelayMessages(activeSessionId)
+  }, [activeSessionId, connected, fetchMessages, fetchRelayMessages])
 
   const activeSession = activeSessionId ? sessions.get(activeSessionId) : null
+  const activeRelayMessages = activeSessionId ? relayMessages.get(activeSessionId) || [] : []
 
   return (
-    <div style={{ display: 'flex', height: '100vh' }}>
+    <div style={{ display: 'flex', height: '100vh', fontFamily: 'system-ui, sans-serif', background: '#0a0a0a', color: '#fff' }}>
       {/* Left Panel - Folders & Sessions */}
       <div style={{ width: '280px', borderRight: '1px solid #333', display: 'flex', flexDirection: 'column' }}>
         <div style={{ padding: '16px', borderBottom: '1px solid #333' }}>
@@ -227,14 +289,17 @@ export default function App() {
                 placeholder="Server URL"
                 value={serverUrl}
                 onChange={e => setServerUrl(e.target.value)}
-                style={{ width: '100%', padding: '8px', marginBottom: '8px', background: '#1a1a1a', border: '1px solid #333', color: '#fff' }}
+                style={{ width: '100%', padding: '8px', marginBottom: '8px', background: '#1a1a1a', border: '1px solid #333', color: '#fff', borderRadius: '4px' }}
               />
-              <button onClick={connectToServer} style={{ width: '100%', padding: '8px', background: '#3b82f6', border: 'none', color: '#fff', cursor: 'pointer' }}>
+              <button
+                onClick={connectToServer}
+                style={{ width: '100%', padding: '8px', background: '#3b82f6', border: 'none', color: '#fff', cursor: 'pointer', borderRadius: '4px' }}
+              >
                 Connect
               </button>
             </div>
           ) : (
-            <div style={{ color: '#22c55e', fontSize: '12px' }}>● Connected to {serverUrl}</div>
+            <div style={{ color: '#22c55e', fontSize: '12px' }}>● Connected ({serverVersion})</div>
           )}
         </div>
 
@@ -242,7 +307,7 @@ export default function App() {
         <div style={{ flex: 1, overflow: 'auto', padding: '8px' }}>
           {folders.map(folder => (
             <div key={folder.id} style={{ marginBottom: '16px' }}>
-              <div style={{ fontSize: '12px', color: '#888', padding: '4px 8px', background: '#1a1a1a' }}>
+              <div style={{ fontSize: '12px', color: '#888', padding: '4px 8px', background: '#1a1a1a', borderRadius: '4px' }}>
                 📁 {folder.name}
               </div>
               {folder.sessionIds.map(sessionId => {
@@ -261,12 +326,18 @@ export default function App() {
                       display: 'flex',
                       alignItems: 'center',
                       gap: '8px',
+                      borderRadius: '4px',
                     }}
                   >
-                    <span style={{ color: session.status === 'running' ? '#22c55e' : '#666' }}>
-                      {session.status === 'running' ? '●' : '○'}
-                    </span>
-                    {session.title}
+                    <span style={{ color: '#666' }}>○</span>
+                    <div>
+                      <div>{session.title}</div>
+                      {session.model && (
+                        <div style={{ fontSize: '10px', color: '#888' }}>
+                          {session.model.modelName || 'Custom Model'}
+                        </div>
+                      )}
+                    </div>
                   </div>
                 )
               })}
@@ -274,13 +345,19 @@ export default function App() {
           ))}
         </div>
 
-        {/* New Session Button */}
-        <div style={{ padding: '12px', borderTop: '1px solid #333' }}>
+        {/* Actions */}
+        <div style={{ padding: '12px', borderTop: '1px solid #333', display: 'flex', gap: '8px' }}>
           <button
             onClick={() => setShowNewSessionForm(true)}
-            style={{ width: '100%', padding: '10px', background: '#22c55e', border: 'none', color: '#000', cursor: 'pointer', fontWeight: 'bold' }}
+            style={{ flex: 1, padding: '10px', background: '#22c55e', border: 'none', color: '#000', cursor: 'pointer', borderRadius: '4px', fontWeight: 'bold' }}
           >
             + New Session
+          </button>
+          <button
+            onClick={refreshSessions}
+            style={{ padding: '10px', background: '#333', border: 'none', color: '#fff', cursor: 'pointer', borderRadius: '4px' }}
+          >
+            🔄
           </button>
         </div>
       </div>
@@ -293,36 +370,53 @@ export default function App() {
               <div>
                 <h3 style={{ fontSize: '16px' }}>{activeSession.title}</h3>
                 <div style={{ fontSize: '11px', color: '#888', marginTop: '4px' }}>
-                  Model: {activeSession.model?.modelName || 'default'} | Status: {activeSession.status}
+                  Model: {activeSession.model?.modelName || 'default'}
                 </div>
               </div>
               <div style={{ display: 'flex', gap: '8px' }}>
                 <button
-                  onClick={() => spawnChildSession(activeSession.id, `Child of ${activeSession.title}`)}
-                  style={{ padding: '8px 12px', background: '#333', border: 'none', color: '#fff', cursor: 'pointer' }}
+                  onClick={() => fetchMessages(activeSession.id)}
+                  style={{ padding: '8px 12px', background: '#333', border: 'none', color: '#fff', cursor: 'pointer', borderRadius: '4px' }}
                 >
-                  Spawn Subagent
+                  Refresh
                 </button>
               </div>
             </div>
 
-            {/* Messages */}
+            {/* Chat Messages */}
             <div style={{ flex: 1, overflow: 'auto', padding: '16px' }}>
-              {activeSession.messages.map(msg => (
-                <div key={msg.id} style={{ marginBottom: '16px' }}>
-                  <div style={{ fontSize: '11px', color: '#888', marginBottom: '4px' }}>
-                    {msg.role === 'user' ? '👤 You' : '🤖 Assistant'}
+              {messages.length === 0 ? (
+                <div style={{ color: '#666', textAlign: 'center', marginTop: '40%' }}>
+                  No messages yet. Start a conversation!
+                </div>
+              ) : (
+                messages.map((msg, idx) => (
+                  <div key={idx} style={{ marginBottom: '16px' }}>
+                    <div style={{ fontSize: '11px', color: msg.info.role === 'user' ? '#3b82f6' : '#22c55e', marginBottom: '4px' }}>
+                      {msg.info.role === 'user' ? '👤 You' : '🤖 Assistant'}
+                    </div>
+                    <div style={{
+                      padding: '12px',
+                      background: msg.info.role === 'user' ? '#1e3a5f' : '#1a1a1a',
+                      borderRadius: '8px',
+                      whiteSpace: 'pre-wrap',
+                    }}>
+                      {msg.parts.filter(p => p.type === 'text').map((p, i) => (
+                        <div key={i}>{p.text}</div>
+                      ))}
+                    </div>
                   </div>
-                  <div style={{
-                    padding: '12px',
-                    background: msg.role === 'user' ? '#1e3a5f' : '#1a1a1a',
-                    borderRadius: '8px',
-                    whiteSpace: 'pre-wrap',
-                  }}>
-                    {msg.content}
+                ))
+              )}
+              {isLoading && (
+                <div style={{ marginBottom: '16px' }}>
+                  <div style={{ fontSize: '11px', color: '#22c55e', marginBottom: '4px' }}>🤖 Assistant</div>
+                  <div style={{ padding: '12px', background: '#1a1a1a', borderRadius: '8px' }}>
+                    <span style={{ animation: 'blink 1s infinite' }}>Thinking...</span>
                   </div>
                 </div>
-              ))}
+              )}
+              <div ref={messagesEndRef} />
             </div>
 
             {/* Input */}
@@ -333,43 +427,104 @@ export default function App() {
                   value={inputValue}
                   onChange={e => setInputValue(e.target.value)}
                   onKeyDown={e => {
-                    if (e.key === 'Enter' && inputValue.trim()) {
+                    if (e.key === 'Enter' && !isLoading && inputValue.trim()) {
                       sendMessage(activeSession.id, inputValue)
                       setInputValue('')
                     }
                   }}
                   placeholder="Type a message..."
-                  style={{ flex: 1, padding: '12px', background: '#1a1a1a', border: '1px solid #333', color: '#fff' }}
+                  disabled={isLoading}
+                  style={{ flex: 1, padding: '12px', background: '#1a1a1a', border: '1px solid #333', color: '#fff', borderRadius: '4px' }}
                 />
                 <button
                   onClick={() => {
-                    if (inputValue.trim()) {
+                    if (!isLoading && inputValue.trim()) {
                       sendMessage(activeSession.id, inputValue)
                       setInputValue('')
                     }
                   }}
-                  style={{ padding: '12px 24px', background: '#3b82f6', border: 'none', color: '#fff', cursor: 'pointer' }}
+                  disabled={isLoading}
+                  style={{ padding: '12px 24px', background: isLoading ? '#333' : '#3b82f6', border: 'none', color: '#fff', cursor: isLoading ? 'not-allowed' : 'pointer', borderRadius: '4px' }}
                 >
-                  Send
+                  {isLoading ? '...' : 'Send'}
                 </button>
               </div>
             </div>
           </>
         ) : (
           <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#666' }}>
-            Select a session or create a new one
+            Select a session to start chatting
           </div>
         )}
       </div>
 
-      {/* Right Panel - Relay Log */}
+      {/* Right Panel - Relay */}
       <div style={{ width: '300px', borderLeft: '1px solid #333', display: 'flex', flexDirection: 'column' }}>
         <div style={{ padding: '12px', borderBottom: '1px solid #333' }}>
-          <h3 style={{ fontSize: '13px', color: '#888' }}>🔄 RELAY LOG</h3>
+          <h3 style={{ fontSize: '13px', color: '#888' }}>🔄 RELAY</h3>
         </div>
-        <div style={{ flex: 1, overflow: 'auto', padding: '8px', fontFamily: 'monospace', fontSize: '11px' }}>
-          {relayLog.map((log, i) => (
-            <div key={i} style={{ padding: '4px 0', color: '#22c55e' }}>{log}</div>
+
+        {/* Relay to another session */}
+        {activeSession && (
+          <div style={{ padding: '12px', borderBottom: '1px solid #333' }}>
+            <div style={{ fontSize: '11px', color: '#888', marginBottom: '8px' }}>Send to another session:</div>
+            <div style={{ display: 'flex', gap: '4px', marginBottom: '8px' }}>
+              <select
+                id="relay-target"
+                style={{ flex: 1, padding: '6px', background: '#1a1a1a', border: '1px solid #333', color: '#fff', borderRadius: '4px', fontSize: '12px' }}
+              >
+                <option value="">Select...</option>
+                {Array.from(sessions.values())
+                  .filter(s => s.id !== activeSession.id)
+                  .map(s => (
+                    <option key={s.id} value={s.id}>{s.title}</option>
+                  ))
+                }
+              </select>
+            </div>
+            <textarea
+              id="relay-content"
+              placeholder="Message to relay..."
+              style={{ width: '100%', padding: '8px', background: '#1a1a1a', border: '1px solid #333', color: '#fff', borderRadius: '4px', fontSize: '12px', minHeight: '60px', marginBottom: '8px' }}
+            />
+            <button
+              onClick={() => {
+                const targetSelect = document.getElementById('relay-target') as HTMLSelectElement
+                const contentArea = document.getElementById('relay-content') as HTMLTextAreaElement
+                if (targetSelect?.value && contentArea?.value) {
+                  relayMessage(activeSession.id, targetSelect.value, contentArea.value)
+                  contentArea.value = ''
+                }
+              }}
+              style={{ width: '100%', padding: '8px', background: '#8b5cf6', border: 'none', color: '#fff', cursor: 'pointer', borderRadius: '4px', fontSize: '12px' }}
+            >
+              Relay Message
+            </button>
+          </div>
+        )}
+
+        {/* Relay Messages Received */}
+        <div style={{ flex: 1, overflow: 'auto', padding: '12px' }}>
+          <div style={{ fontSize: '11px', color: '#888', marginBottom: '8px' }}>📨 Messages from other sessions:</div>
+          {activeRelayMessages.length === 0 ? (
+            <div style={{ color: '#666', fontSize: '12px' }}>No relay messages</div>
+          ) : (
+            activeRelayMessages.map((msg, idx) => (
+              <div key={idx} style={{ marginBottom: '12px', padding: '8px', background: '#1a1a1a', borderRadius: '4px' }}>
+                <div style={{ fontSize: '10px', color: '#888', marginBottom: '4px' }}>
+                  From: {msg.sourceSessionTitle}
+                </div>
+                <div style={{ fontSize: '12px' }}>{msg.content}</div>
+              </div>
+            ))
+          )}
+        </div>
+
+        {/* Relay Log */}
+        <div style={{ padding: '12px', borderTop: '1px solid #333', maxHeight: '150px', overflow: 'auto' }}>
+          <div style={{ fontSize: '11px', color: '#888', marginBottom: '4px' }}>📋 Log:</div>
+          {relayLog.slice(-10).map((log, i) => (
+            <div key={i} style={{ fontSize: '10px', color: '#22c55e', fontFamily: 'monospace' }}>{log}</div>
           ))}
         </div>
       </div>
@@ -393,7 +548,7 @@ export default function App() {
                 type="text"
                 value={newSessionTitle}
                 onChange={e => setNewSessionTitle(e.target.value)}
-                style={{ width: '100%', padding: '8px', marginTop: '4px', background: '#0a0a0a', border: '1px solid #333', color: '#fff' }}
+                style={{ width: '100%', padding: '8px', marginTop: '4px', background: '#0a0a0a', border: '1px solid #333', color: '#fff', borderRadius: '4px' }}
               />
             </label>
 
@@ -402,9 +557,8 @@ export default function App() {
               <select
                 value={newSessionFolder}
                 onChange={e => setNewSessionFolder(e.target.value)}
-                style={{ width: '100%', padding: '8px', marginTop: '4px', background: '#0a0a0a', border: '1px solid #333', color: '#fff' }}
+                style={{ width: '100%', padding: '8px', marginTop: '4px', background: '#0a0a0a', border: '1px solid #333', color: '#fff', borderRadius: '4px' }}
               >
-                <option value="">Select folder</option>
                 {folders.map(f => (
                   <option key={f.id} value={f.id}>{f.name}</option>
                 ))}
@@ -422,7 +576,7 @@ export default function App() {
                 value={newModelApiKey}
                 onChange={e => setNewModelApiKey(e.target.value)}
                 placeholder="sk-..."
-                style={{ width: '100%', padding: '8px', marginTop: '2px', background: '#0a0a0a', border: '1px solid #333', color: '#fff', fontSize: '12px' }}
+                style={{ width: '100%', padding: '8px', marginTop: '2px', background: '#0a0a0a', border: '1px solid #333', color: '#fff', fontSize: '12px', borderRadius: '4px' }}
               />
             </label>
 
@@ -433,7 +587,7 @@ export default function App() {
                 value={newModelEndpoint}
                 onChange={e => setNewModelEndpoint(e.target.value)}
                 placeholder="https://api.anthropic.com/v1"
-                style={{ width: '100%', padding: '8px', marginTop: '2px', background: '#0a0a0a', border: '1px solid #333', color: '#fff', fontSize: '12px' }}
+                style={{ width: '100%', padding: '8px', marginTop: '2px', background: '#0a0a0a', border: '1px solid #333', color: '#fff', fontSize: '12px', borderRadius: '4px' }}
               />
             </label>
 
@@ -444,14 +598,14 @@ export default function App() {
                 value={newModelName}
                 onChange={e => setNewModelName(e.target.value)}
                 placeholder="claude-3-5-sonnet-20241022"
-                style={{ width: '100%', padding: '8px', marginTop: '2px', background: '#0a0a0a', border: '1px solid #333', color: '#fff', fontSize: '12px' }}
+                style={{ width: '100%', padding: '8px', marginTop: '2px', background: '#0a0a0a', border: '1px solid #333', color: '#fff', fontSize: '12px', borderRadius: '4px' }}
               />
             </label>
 
             <div style={{ display: 'flex', gap: '8px' }}>
               <button
                 onClick={() => setShowNewSessionForm(false)}
-                style={{ flex: 1, padding: '10px', background: '#333', border: 'none', color: '#fff', cursor: 'pointer' }}
+                style={{ flex: 1, padding: '10px', background: '#333', border: 'none', color: '#fff', cursor: 'pointer', borderRadius: '4px' }}
               >
                 Cancel
               </button>
@@ -459,10 +613,11 @@ export default function App() {
                 onClick={() => {
                   createSession({
                     title: newSessionTitle || 'New Session',
-                    folderId: newSessionFolder || 'relay',
+                    folderId: newSessionFolder || 'default',
                     model: newModelApiKey ? {
                       apiKey: newModelApiKey,
                       apiEndpoint: newModelEndpoint,
+                      providerID: 'openai',
                       modelName: newModelName,
                     } : undefined,
                   })
@@ -472,7 +627,7 @@ export default function App() {
                   setNewModelEndpoint('')
                   setNewModelName('')
                 }}
-                style={{ flex: 1, padding: '10px', background: '#22c55e', border: 'none', color: '#000', cursor: 'pointer', fontWeight: 'bold' }}
+                style={{ flex: 1, padding: '10px', background: '#22c55e', border: 'none', color: '#000', cursor: 'pointer', fontWeight: 'bold', borderRadius: '4px' }}
               >
                 Create
               </button>
