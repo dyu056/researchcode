@@ -21,6 +21,15 @@ interface Session {
 interface MessagePart {
   type: string
   text?: string
+  tool?: string
+  state?: {
+    status?: string
+    input?: any
+    output?: any
+    error?: string
+  }
+  reason?: string
+  content?: string
   [key: string]: any
 }
 
@@ -29,6 +38,7 @@ interface Message {
     id: string
     role: string
     time: { created: number; updated: number }
+    finish?: string
   }
   parts: MessagePart[]
 }
@@ -409,6 +419,7 @@ export default function App() {
                   <div key={idx} style={{ marginBottom: '16px' }}>
                     <div style={{ fontSize: '11px', color: msg.info.role === 'user' ? '#3b82f6' : '#22c55e', marginBottom: '4px' }}>
                       {msg.info.role === 'user' ? '👤 You' : '🤖 Assistant'}
+                      {msg.info.finish && <span style={{ color: '#888', marginLeft: '8px' }}>[{msg.info.finish}]</span>}
                     </div>
                     <div style={{
                       padding: '12px',
@@ -416,9 +427,100 @@ export default function App() {
                       borderRadius: '8px',
                       whiteSpace: 'pre-wrap',
                     }}>
-                      {msg.parts.filter(p => p.type === 'text').map((p, i) => (
-                        <div key={i}>{p.text}</div>
-                      ))}
+                      {msg.parts.map((part, pIdx) => {
+                        // Text part
+                        if (part.type === 'text') {
+                          return (
+                            <div key={pIdx} style={{ marginBottom: '8px' }}>
+                              <span style={{ color: '#fff' }}>{part.text}</span>
+                            </div>
+                          )
+                        }
+                        // Reasoning part (thinking)
+                        if (part.type === 'reasoning') {
+                          return (
+                            <div key={pIdx} style={{ marginBottom: '8px', padding: '8px', background: '#2a2a2a', borderRadius: '4px', borderLeft: '3px solid #f59e0b' }}>
+                              <div style={{ fontSize: '10px', color: '#f59e0b', marginBottom: '4px', fontWeight: 'bold' }}>💭 Thinking</div>
+                              <div style={{ color: '#d1d5db', fontSize: '12px' }}>{part.text}</div>
+                            </div>
+                          )
+                        }
+                        // Tool call part
+                        if (part.type === 'tool') {
+                          const state = part.state as any
+                          const status = state?.status
+                          const isError = status === 'error'
+                          const isSuccess = status === 'success' || status === 'input'
+                          return (
+                            <div key={pIdx} style={{ marginBottom: '8px', padding: '8px', background: isError ? '#3f1515' : '#1a2e1a', borderRadius: '4px', borderLeft: `3px solid ${isError ? '#ef4444' : isSuccess ? '#22c55e' : '#3b82f6'}` }}>
+                              <div style={{ fontSize: '10px', color: '#888', marginBottom: '4px' }}>
+                                🔧 Tool: <span style={{ color: '#fff' }}>{part.tool}</span>
+                                {state?.status && (
+                                  <span style={{ color: isError ? '#ef4444' : '#22c55e', marginLeft: '8px' }}>
+                                    [{state.status}]
+                                  </span>
+                                )}
+                              </div>
+                              {state?.input && (
+                                <div style={{ fontSize: '11px', color: '#d1d5db' }}>
+                                  <div style={{ color: '#888' }}>Input:</div>
+                                  <pre style={{ margin: '4px 0', whiteSpace: 'pre-wrap', fontFamily: 'monospace' }}>
+                                    {JSON.stringify(state.input, null, 2)}
+                                  </pre>
+                                </div>
+                              )}
+                              {state?.output !== undefined && !isError && (
+                                <div style={{ fontSize: '11px', color: '#22c55e', marginTop: '4px' }}>
+                                  <div style={{ color: '#888' }}>Output:</div>
+                                  <div style={{ whiteSpace: 'pre-wrap' }}>{typeof state.output === 'object' ? JSON.stringify(state.output) : String(state.output)}</div>
+                                </div>
+                              )}
+                              {state?.error && (
+                                <div style={{ fontSize: '11px', color: '#ef4444', marginTop: '4px' }}>
+                                  <div style={{ color: '#888' }}>Error:</div>
+                                  <div>{state.error}</div>
+                                </div>
+                              )}
+                            </div>
+                          )
+                        }
+                        // Step start
+                        if (part.type === 'step-start') {
+                          return (
+                            <div key={pIdx} style={{ marginBottom: '8px', padding: '4px 8px', background: '#252525', borderRadius: '4px', fontSize: '10px', color: '#888' }}>
+                              → Step started
+                            </div>
+                          )
+                        }
+                        // Step finish
+                        if (part.type === 'step-finish') {
+                          return (
+                            <div key={pIdx} style={{ marginBottom: '8px', padding: '4px 8px', background: '#252525', borderRadius: '4px', fontSize: '10px', color: '#888' }}>
+                              ✓ Step finished
+                              {part.reason && <span style={{ marginLeft: '8px' }}>({part.reason})</span>}
+                            </div>
+                          )
+                        }
+                        // Bash tool
+                        if (part.type === 'bash' || part.tool === 'bash') {
+                          const content = part.content || part.text || ''
+                          return (
+                            <div key={pIdx} style={{ marginBottom: '8px', padding: '8px', background: '#1e1e1e', borderRadius: '4px', borderLeft: '3px solid #22c55e' }}>
+                              <div style={{ fontSize: '10px', color: '#22c55e', marginBottom: '4px' }}>⌨️ Bash</div>
+                              <div style={{ fontFamily: 'monospace', fontSize: '12px', color: '#d1d5db' }}>{content}</div>
+                            </div>
+                          )
+                        }
+                        // Other unknown types
+                        return (
+                          <div key={pIdx} style={{ marginBottom: '4px', padding: '4px', background: '#2a2a2a', borderRadius: '2px', fontSize: '11px' }}>
+                            <span style={{ color: '#888' }}>[{part.type}]</span>
+                            <pre style={{ margin: '4px 0', whiteSpace: 'pre-wrap', fontSize: '10px', color: '#d1d5db' }}>
+                              {JSON.stringify(part, null, 2).substring(0, 500)}
+                            </pre>
+                          </div>
+                        )
+                      })}
                     </div>
                   </div>
                 ))
