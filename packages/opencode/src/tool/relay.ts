@@ -3,6 +3,7 @@ import { Tool } from "./tool"
 import { Session } from "../session"
 import { SessionPrompt } from "../session/prompt"
 import type { SessionID } from "../session/schema"
+import { Log } from "@/util/log"
 
 export const RelayTool = Tool.define("relay", async () => {
   return {
@@ -22,7 +23,7 @@ export const RelayTool = Tool.define("relay", async () => {
       // Get current session info
       const currentSession = await Session.get(currentSessionID)
 
-      // Send the relayed message to target session and trigger AI processing
+      // First add the message without waiting for AI processing
       await SessionPrompt.prompt({
         sessionID: targetSessionID,
         parts: [
@@ -31,7 +32,14 @@ export const RelayTool = Tool.define("relay", async () => {
             text: `[Relay from "${currentSession.title}"]:\n${params.content}`,
           },
         ],
-        noReply: false, // Let the target session's AI process and respond
+        noReply: true, // Just queue the message
+      })
+
+      // Trigger AI processing without waiting
+      // Use setImmediate to not block the tool response
+      setImmediate(() => {
+        SessionPrompt.loop({ sessionID: targetSessionID })
+          .catch((err) => Log.error("Relay loop error:", err))
       })
 
       return {

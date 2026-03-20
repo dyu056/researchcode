@@ -1085,7 +1085,7 @@ export const SessionRoutes = lazy(() =>
         await Session.get(body.targetSessionID)
 
         // Use SessionPrompt to send the relayed message to target session
-        // This creates a user message and triggers AI processing
+        // First add the message without waiting for AI processing
         await SessionPrompt.prompt({
           sessionID: body.targetSessionID,
           parts: [
@@ -1094,7 +1094,14 @@ export const SessionRoutes = lazy(() =>
               text: `[Relay from "${sourceSession.title}"]:\n${body.content}`,
             },
           ],
-          noReply: true, // Don't wait for AI response, just queue the message
+          noReply: true, // Just queue the message
+        })
+
+        // Trigger AI processing without waiting
+        // Use setImmediate to not block the HTTP response
+        setImmediate(() => {
+          SessionPrompt.loop({ sessionID: body.targetSessionID })
+            .catch((err) => Log.error("Relay loop error:", err))
         })
 
         return c.json({ success: true })
