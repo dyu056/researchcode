@@ -76,7 +76,7 @@ async function testAPI() {
   console.log('\n4. Sending async message to Session 1...')
   const asyncResponse = await fetch(`${API_URL}/session/${session1Id}/prompt_async?directory=${encodeURIComponent(DIRECTORY)}`, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers: { 'Content-Type': 'application/json', 'Accept': 'application/json' },
     body: JSON.stringify({
       parts: [{ type: 'text', text: 'Say "Hello from Session 1!" in exactly 3 words' }]
     })
