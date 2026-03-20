@@ -718,6 +718,26 @@ export namespace Session {
     }
   })
 
+  export const removeAll = fn(z.object({}), async () => {
+    // Get all sessions
+    const sessions: SessionID[] = []
+    for await (const session of listGlobal({})) {
+      sessions.push(session.id)
+    }
+
+    let deleted = 0
+    for (const sessionID of sessions) {
+      try {
+        await remove(sessionID)
+        deleted++
+      } catch (e) {
+        log.error(`Failed to delete session ${sessionID}:`, e)
+      }
+    }
+
+    return { deleted, total: sessions.length }
+  })
+
   export const updateMessage = fn(MessageV2.Info, async (msg) => {
     const time_created = msg.time.created
     const { id, sessionID, ...data } = msg

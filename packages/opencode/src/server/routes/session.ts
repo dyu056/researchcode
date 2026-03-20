@@ -92,6 +92,29 @@ export const SessionRoutes = lazy(() =>
         return c.json(result)
       },
     )
+    .delete(
+      "/all",
+      describeRoute({
+        summary: "Delete all sessions",
+        description: "Delete all sessions from the database, removing all associated data.",
+        operationId: "session.deleteAll",
+        responses: {
+          200: {
+            description: "Successfully deleted all sessions",
+            content: {
+              "application/json": {
+                schema: resolver(z.object({ deleted: z.number(), total: z.number() })),
+              },
+            },
+          },
+          ...errors(400),
+        },
+      }),
+      async (c) => {
+        const result = await Session.removeAll({})
+        return c.json(result)
+      },
+    )
     .get(
       "/:sessionID",
       describeRoute({

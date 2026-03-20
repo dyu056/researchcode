@@ -144,7 +144,7 @@ export default function App() {
   const fetchMessages = useCallback(async (sessionId: string) => {
     try {
       const msgs = await apiRequest<Message[]>(serverUrl, 'GET', `/session/${sessionId}/message`)
-      setMessages(msgs.reverse()) // oldest first for display
+      setMessages(msgs) // oldest first (API returns chronological order)
     } catch (error) {
       addRelayLog(`Failed to fetch messages: ${error}`)
     }
@@ -255,6 +255,25 @@ export default function App() {
     }
   }, [serverUrl, addRelayLog])
 
+  // Delete all sessions
+  const deleteAllSessions = useCallback(async () => {
+    const confirmed = window.confirm(`Delete ALL sessions? This cannot be undone.`)
+    if (!confirmed) return
+
+    try {
+      const result = await apiRequest<{ deleted: number; total: number }>(serverUrl, 'DELETE', '/session/all')
+      addRelayLog(`Cleanup complete: ${result.deleted}/${result.total} sessions deleted`)
+
+      // Clear local state
+      setSessions(new Map())
+      setFolders(prev => prev.map(f => ({ ...f, sessionIds: [] })))
+      setActiveSessionId(null)
+      setMessages([])
+    } catch (error) {
+      addRelayLog(`Failed to delete all sessions: ${error}`)
+    }
+  }, [serverUrl, addRelayLog])
+
   // Load messages when active session changes
   useEffect(() => {
     if (!activeSessionId || !connected) return
@@ -347,6 +366,13 @@ export default function App() {
             style={{ padding: '10px', background: '#333', border: 'none', color: '#fff', cursor: 'pointer', borderRadius: '4px' }}
           >
             🔄
+          </button>
+          <button
+            onClick={deleteAllSessions}
+            style={{ padding: '10px', background: '#ef4444', border: 'none', color: '#fff', cursor: 'pointer', borderRadius: '4px' }}
+            title="Delete all sessions"
+          >
+            🗑️
           </button>
         </div>
       </div>

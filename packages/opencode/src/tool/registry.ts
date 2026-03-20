@@ -31,6 +31,8 @@ import { Truncate } from "./truncate"
 import { ApplyPatchTool } from "./apply_patch"
 import { Glob } from "../util/glob"
 import { pathToFileURL } from "url"
+import { RelayTool } from "./relay"
+import { ListSessionsTool } from "./list_sessions"
 
 export namespace ToolRegistry {
   const log = Log.create({ service: "tool.registry" })
@@ -121,6 +123,8 @@ export namespace ToolRegistry {
       ...(Flag.OPENCODE_EXPERIMENTAL_LSP_TOOL ? [LspTool] : []),
       ...(config.experimental?.batch_tool === true ? [BatchTool] : []),
       ...(Flag.OPENCODE_EXPERIMENTAL_PLAN_MODE && Flag.OPENCODE_CLIENT === "cli" ? [PlanExitTool] : []),
+      ListSessionsTool,
+      RelayTool,
       ...custom,
     ]
   }
