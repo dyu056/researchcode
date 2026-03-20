@@ -22,7 +22,7 @@ export const RelayTool = Tool.define("relay", async () => {
       // Get current session info
       const currentSession = await Session.get(currentSessionID)
 
-      // Send the relayed message to target session
+      // Send the relayed message to target session and trigger AI processing
       await SessionPrompt.prompt({
         sessionID: targetSessionID,
         parts: [
@@ -31,7 +31,7 @@ export const RelayTool = Tool.define("relay", async () => {
             text: `[Relay from "${currentSession.title}"]:\n${params.content}`,
           },
         ],
-        noReply: true,
+        noReply: false, // Let the target session's AI process and respond
       })
 
       return {
