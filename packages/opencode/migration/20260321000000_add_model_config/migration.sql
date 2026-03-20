@@ -1,0 +1,1 @@
+ALTER TABLE `session` ADD COLUMN `model_config` text;
