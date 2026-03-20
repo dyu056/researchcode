@@ -164,6 +164,17 @@ export default function App() {
   const sendMessage = useCallback(async (sessionId: string, content: string) => {
     if (!content.trim()) return
 
+    // Optimistically add user message immediately to show in UI
+    const tempUserMessage: Message = {
+      info: {
+        id: `temp-${Date.now()}`,
+        role: 'user',
+        time: { created: Date.now(), updated: Date.now() }
+      },
+      parts: [{ type: 'text', text: content }]
+    }
+
+    setMessages(prev => [...prev, tempUserMessage])
     setIsLoading(true)
     addRelayLog(`[Session] Sending: ${content.substring(0, 50)}...`)
 
@@ -183,8 +194,8 @@ export default function App() {
 
       addRelayLog(`[Session] Response received`)
 
-      // Wait a bit for the AI to process, then refresh messages
-      await new Promise(r => setTimeout(r, 5000))
+      // Wait for the AI to process, then refresh messages
+      await new Promise(r => setTimeout(r, 8000))
       await fetchMessages(sessionId)
     } catch (error) {
       addRelayLog(`Failed to send message: ${error}`)
