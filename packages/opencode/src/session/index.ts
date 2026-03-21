@@ -233,6 +233,7 @@ export namespace Session {
       .object({
         parentID: SessionID.zod.optional(),
         title: z.string().optional(),
+        instruction_prompt: z.string().optional(),
         permission: Info.shape.permission,
         workspaceID: WorkspaceID.zod.optional(),
         model: z
@@ -250,6 +251,7 @@ export namespace Session {
         parentID: input?.parentID,
         directory: Instance.directory,
         title: input?.title,
+        instructionPrompt: input?.instruction_prompt,
         permission: input?.permission,
         workspaceID: input?.workspaceID,
         model: input?.model,
@@ -318,6 +320,7 @@ export namespace Session {
   export async function createNext(input: {
     id?: SessionID
     title?: string
+    instructionPrompt?: string
     parentID?: SessionID
     workspaceID?: WorkspaceID
     directory: string
@@ -329,6 +332,7 @@ export namespace Session {
       modelName?: string
     }
   }) {
+    const title = input.title ?? (input.instructionPrompt ? `Session: ${input.instructionPrompt.substring(0, 50)}...` : undefined)
     const result: Info = {
       id: SessionID.descending(input.id),
       slug: Slug.create(),
@@ -337,7 +341,7 @@ export namespace Session {
       directory: input.directory,
       workspaceID: input.workspaceID,
       parentID: input.parentID,
-      title: input.title ?? createDefaultTitle(!!input.parentID),
+      title: title ?? createDefaultTitle(!!input.parentID),
       permission: input.permission,
       time: {
         created: Date.now(),
@@ -731,7 +735,7 @@ export namespace Session {
         await remove(sessionID)
         deleted++
       } catch (e) {
-        log.error(`Failed to delete session ${sessionID}:`, e)
+        log.error(`Failed to delete session ${sessionID}: ${e}`)
       }
     }
 

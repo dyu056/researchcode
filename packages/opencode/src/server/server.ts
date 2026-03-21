@@ -42,6 +42,7 @@ import { Filesystem } from "@/util/filesystem"
 import { QuestionRoutes } from "./routes/question"
 import { PermissionRoutes } from "./routes/permission"
 import { GlobalRoutes } from "./routes/global"
+import { SessionCreatorMcpRoutes } from "./routes/session-creator-mcp"
 import { MDNS } from "./mdns"
 import { lazy } from "@/util/lazy"
 
@@ -251,6 +252,7 @@ export namespace Server {
       .route("/", FileRoutes())
       .route("/", EventRoutes())
       .route("/mcp", McpRoutes())
+      .route("/mcp-sessions", SessionCreatorMcpRoutes())
       .route("/tui", TuiRoutes())
       .post(
         "/instance/dispose",

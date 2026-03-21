@@ -196,36 +196,109 @@ export default function App() {
     }
   }, [serverUrl, addRelayLog, fetchMessages])
 
-  // Create a new session
+  // MCP session ID for the connection
+  const [mcpSessionId, setMcpSessionId] = useState<string | null>(null)
+
+  // MCP JSON-RPC request helper
+  const mcpRequest = useCallback(async (method: string, params?: any): Promise<any> => {
+    const mcpUrl = `${serverUrl.replace('/session', '')}/mcp-sessions`
+    const response = await fetch(mcpUrl, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        jsonrpc: '2.0',
+        id: Date.now(),
+        method,
+        params,
+      }),
+    })
+    if (!response.ok) {
+      throw new Error(`MCP error: ${response.status}`)
+    }
+    const result = await response.json()
+    if (result.error) {
+      throw new Error(`MCP error: ${result.error.message}`)
+    }
+    return result.result
+  }, [serverUrl])
+
+  // Initialize MCP connection
+  const initMcp = useCallback(async () => {
+    try {
+      const mcpUrl = `${serverUrl.replace('/session', '')}/mcp-sessions`
+      // Send initialize
+      await mcpRequest('initialize', {
+        protocolVersion: '2024-11-05',
+        capabilities: {},
+        clientInfo: { name: 'demo-relay', version: '1.0.0' },
+      })
+      // List tools to verify create_session is available
+      const toolsResult = await mcpRequest('tools/list')
+      const hasCreateSession = toolsResult.tools?.some((t: any) => t.name === 'create_session')
+      if (hasCreateSession) {
+        addRelayLog('MCP: create_session tool available')
+      } else {
+        addRelayLog('MCP: create_session tool NOT found')
+      }
+      setMcpSessionId('active')
+    } catch (error) {
+      addRelayLog(`MCP init failed: ${error}`)
+    }
+  }, [serverUrl, mcpRequest, addRelayLog])
+
+  // Create a new session via MCP
   const createSession = useCallback(async (config: {
     title: string
     folderId: string
     model?: ModelConfig
   }) => {
     try {
-      const body: any = { title: config.title }
-      if (config.model?.apiKey) {
-        body.model = {
-          apiKey: config.model.apiKey,
-          apiEndpoint: config.model.apiEndpoint,
-          providerID: config.model.providerID,
-          modelName: config.model.modelName,
-        }
+      // Ensure MCP is initialized
+      if (!mcpSessionId) {
+        await initMcp()
       }
 
-      const newSession = await apiRequest<Session>(serverUrl, 'POST', '/session', body)
+      // Build arguments for create_session tool
+      const args: any = {}
+      if (config.title) {
+        args.instruction_prompt = config.title
+      }
+      if (config.model?.apiKey) {
+        args.api_key = config.model.apiKey
+        args.api_endpoint = config.model.apiEndpoint || ''
+        args.model = config.model.modelName || ''
+      }
+
+      // Call create_session via MCP
+      const result = await mcpRequest('tools/call', {
+        name: 'create_session',
+        arguments: args,
+      })
+
+      // Parse the response to get session_id
+      const responseText = result.content?.[0]?.text || '{}'
+      const response = JSON.parse(responseText)
+      const sessionId = response.session_id
+
+      if (!sessionId) {
+        throw new Error('No session_id in response')
+      }
+
+      // Fetch the full session details via REST
+      const newSession = await apiRequest<Session>(serverUrl, 'GET', `/session/${sessionId}`)
+
       setSessions(prev => new Map(prev).set(newSession.id, newSession))
       setFolders(prev => prev.map(f =>
         f.id === config.folderId
           ? { ...f, sessionIds: [...f.sessionIds, newSession.id] }
           : f
       ))
-      addRelayLog(`Session created: ${config.title} (${newSession.id.substring(0, 20)}...)`)
+      addRelayLog(`Session created via MCP: ${config.title} (${sessionId.substring(0, 20)}...)`)
       setActiveSessionId(newSession.id)
     } catch (error) {
       addRelayLog(`Failed to create session: ${error}`)
     }
-  }, [serverUrl, addRelayLog])
+  }, [serverUrl, mcpSessionId, initMcp, mcpRequest, apiRequest, addRelayLog])
 
   // Refresh sessions list
   const refreshSessions = useCallback(async () => {
