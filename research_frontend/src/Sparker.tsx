@@ -99,18 +99,18 @@ export function Sparker({ serverUrl, onClose }: SparkerProps) {
   // Check if selected folder has existing sparker research sessions
   const checkExistingSessions = async (folderPath: string) => {
     try {
-      // List files in the selected folder
-      const response = await fetch(`${serverUrl}/file?path=${encodeURIComponent(folderPath)}`)
-      if (response.ok) {
-        const files = await response.json() as Array<{ name: string; type: string; path: string }>
-        // Filter for directories (each is a research project)
-        const sessions = files
-          .filter((f: any) => f.type === 'directory' && !f.name.startsWith('.'))
-          .map((f: any) => ({ name: f.name, path: f.path }))
-        setExistingSessions(sessions)
-      } else {
-        setExistingSessions([])
+      const sessions: { name: string; path: string }[] = []
+
+      // Use File System Access API to list directories in the user's selected folder
+      if (rootFolderHandle) {
+        for await (const [name, handle] of rootFolderHandle.entries()) {
+          if (handle.kind === 'directory' && !name.startsWith('.')) {
+            sessions.push({ name, path: name })
+          }
+        }
       }
+
+      setExistingSessions(sessions)
     } catch {
       setExistingSessions([])
     }
@@ -146,6 +146,24 @@ export function Sparker({ serverUrl, onClose }: SparkerProps) {
   const [tempModel, setTempModel] = useState<ModelConfig>({})
 
   const messagesEndRef = useRef<HTMLDivElement>(null)
+  const surveyorInitializedRef = useRef(false)
+
+  // Send initial literature review prompt to surveyor when session starts
+  useEffect(() => {
+    if (surveyorSessionId && step === 'session' && !surveyorInitializedRef.current) {
+      surveyorInitializedRef.current = true
+      const initialPrompt = `You are a Surveyor web research agent. Your task is to conduct a literature review on "${topicName}".
+
+Please:
+1. Search the web for relevant academic papers and sources on this topic
+2. Save any important findings to the surveyor/ folder in the project directory
+3. Provide a summary of the key papers and findings
+
+Start by searching for relevant papers and sources.`
+
+      sendMessage(surveyorSessionId, initialPrompt, true)
+    }
+  }, [surveyorSessionId, step])
 
   useEffect(() => {
     if (step === 'folder') {
