@@ -6,7 +6,7 @@ import { useTheme } from "@tui/context/theme"
 import { useSDK } from "@tui/context/sdk"
 import { useToast } from "../../ui/toast"
 import { Spinner } from "@tui/component/spinner"
-import { ScrollBoxRenderable, TextAttributes } from "@opentui/core"
+import { TextAttributes } from "@opentui/core"
 import type { Message, Part } from "@opencode-ai/sdk/v2"
 
 export function RelayPanel() {
@@ -205,7 +205,7 @@ export function RelayPanel() {
           </box>
 
           {/* Session list */}
-          <ScrollBoxRenderable flexGrow={1}>
+          <scrollbox flexGrow={1}>
             <For each={sessions().filter(Boolean)}>
               {(session) => (
                 <Show when={session}>
@@ -240,7 +240,7 @@ export function RelayPanel() {
                 </Show>
               )}
             </For>
-          </ScrollBoxRenderable>
+          </scrollbox>
         </box>
 
         {/* Right side - Messages and input */}
@@ -254,11 +254,11 @@ export function RelayPanel() {
             }
           >
             {/* Messages area */}
-            <ScrollBoxRenderable flexGrow={1} padding={1}>
+            <scrollbox flexGrow={1} padding={1}>
               <For each={activeMessages()}>
                 {(message) => renderMessage(message)}
               </For>
-            </ScrollBoxRenderable>
+            </scrollbox>
 
             {/* Input area */}
             <box padding={1} borderTop={1} flexDirection="row" gap={1} alignItems="center">
