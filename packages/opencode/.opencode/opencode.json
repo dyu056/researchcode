@@ -1,0 +1,2 @@
+{
+  "$schema": "https://opencode.ai/config.json","mcp":{"session-creator":{"type":"remote","url":"http://localhost:4096/mcp-sessions"}}}

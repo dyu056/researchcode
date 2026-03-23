@@ -25,6 +25,7 @@ import { KeybindProvider } from "@tui/context/keybind"
 import { ThemeProvider, useTheme } from "@tui/context/theme"
 import { Home } from "@tui/routes/home"
 import { Session } from "@tui/routes/session"
+import { RelayPanel } from "@tui/routes/relay-panel"
 import { PromptHistoryProvider } from "./component/prompt/history"
 import { FrecencyProvider } from "./component/prompt/frecency"
 import { PromptStashProvider } from "./component/prompt/stash"
@@ -358,6 +359,24 @@ function App() {
 
   const connected = useConnected()
   command.register(() => [
+    {
+      title: "Open Relay Panel",
+      value: "relay.panel",
+      keybind: "relay_panel",
+      category: "Session",
+      suggested: sync.data.session.length > 0,
+      slash: {
+        name: "relay",
+      },
+      onSelect: () => {
+        if (route.data.type === "relay-panel") {
+          route.navigate({ type: "home" })
+        } else {
+          route.navigate({ type: "relay-panel" })
+        }
+        dialog.clear()
+      },
+    },
     {
       title: "Switch session",
       value: "session.list",
@@ -759,6 +778,9 @@ function App() {
         </Match>
         <Match when={route.data.type === "session"}>
           <Session />
+        </Match>
+        <Match when={route.data.type === "relay-panel"}>
+          <RelayPanel />
         </Match>
       </Switch>
     </box>

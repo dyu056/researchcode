@@ -95,8 +95,9 @@ export async function handleMcpSessionCreator(request: Request): Promise<Respons
         const args = params.arguments ?? {}
         const parsed = createSessionSchema.parse(args)
 
-        const session = await Session.create({
+        const session = await Session.createNext({
           title: parsed.title,
+          directory: process.cwd(),
           model:
             parsed.api_key || parsed.api_endpoint || parsed.model
               ? {
@@ -105,7 +106,7 @@ export async function handleMcpSessionCreator(request: Request): Promise<Respons
                   modelName: parsed.model,
                 }
               : undefined,
-          instruction_prompt: parsed.instruction_prompt,
+          instructionPrompt: parsed.instruction_prompt,
         })
 
         return new Response(JSON.stringify({
