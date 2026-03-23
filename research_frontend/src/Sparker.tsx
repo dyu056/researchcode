@@ -66,32 +66,55 @@ interface SparkerProps {
 }
 
 export function Sparker({ serverUrl, onClose }: SparkerProps) {
-  const [step, setStep] = useState<'folder' | 'topic' | 'session'>('folder')
+  const [step, setStep] = useState<'folder' | 'existing' | 'topic' | 'session'>('folder')
   const [rootFolder, setRootFolder] = useState('.')
+  const [rootFolderHandle, setRootFolderHandle] = useState<FileSystemDirectoryHandle | null>(null)
   const [topicName, setTopicName] = useState('')
   const [folders, setFolders] = useState<{ name: string; path: string }[]>([])
   const [foldersLoading, setFoldersLoading] = useState(true)
   const [currentPath, setCurrentPath] = useState('.')
   const [isCreating, setIsCreating] = useState(false)
 
+  // Existing research sessions detected in root folder
+  const [existingSessions, setExistingSessions] = useState<{ name: string; path: string }[]>([])
+
   // Native folder picker using File System Access API
   const pickFolder = async () => {
     try {
       // @ts-ignore - showDirectoryPicker is not in TypeScript types yet
       const dirHandle = await window.showDirectoryPicker()
-      // Get the path from the handle - this is limited in browsers
-      // We'll use the name as a display and store the handle for later use
-      const path = dirHandle.name
-      setRootFolder(path)
-      setStep('topic')
+      setRootFolderHandle(dirHandle)
+      setRootFolder(dirHandle.name)
+      await checkExistingSessions(dirHandle.name)
     } catch (err: any) {
       if (err.name !== 'AbortError') {
         console.error('Failed to pick folder:', err)
       }
       // Fallback: use a default path for development/testing
       setRootFolder('.')
-      setStep('topic')
+      await checkExistingSessions('.')
     }
+  }
+
+  // Check if selected folder has existing sparker research sessions
+  const checkExistingSessions = async (folderPath: string) => {
+    try {
+      // List files in the selected folder
+      const response = await fetch(`${serverUrl}/file?path=${encodeURIComponent(folderPath)}`)
+      if (response.ok) {
+        const files = await response.json() as Array<{ name: string; type: string; path: string }>
+        // Filter for directories (each is a research project)
+        const sessions = files
+          .filter((f: any) => f.type === 'directory' && !f.name.startsWith('.'))
+          .map((f: any) => ({ name: f.name, path: f.path }))
+        setExistingSessions(sessions)
+      } else {
+        setExistingSessions([])
+      }
+    } catch {
+      setExistingSessions([])
+    }
+    setStep('existing')
   }
   const [error, setError] = useState<string | null>(null)
 
@@ -151,6 +174,29 @@ export function Sparker({ serverUrl, onClose }: SparkerProps) {
     setError(null)
 
     try {
+      // Create the folder structure using File System Access API
+      // This creates folders directly in the user's selected directory
+      if (rootFolderHandle) {
+        // Create: <selected>/<topic>/
+        const topicHandle = await rootFolderHandle.getDirectoryHandle(topic, { create: true })
+        // Create: <selected>/<topic>/surveyor/
+        await topicHandle.getDirectoryHandle('surveyor', { create: true })
+      } else {
+        // Fallback to server-side folder creation if no handle (e.g., in non-supporting browsers)
+        const folderPath = `${rootFolder}/${topic}`
+        const surveyorPath = `${folderPath}/surveyor`
+        await fetch(`${serverUrl}/folder`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ path: folderPath })
+        })
+        await fetch(`${serverUrl}/folder`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ path: surveyorPath })
+        })
+      }
+
       const sparkerSession = await apiRequest<{ id?: string; error?: string }>(
         serverUrl, 'POST', '/session',
         {
@@ -301,13 +347,62 @@ export function Sparker({ serverUrl, onClose }: SparkerProps) {
     )
   }
 
-  // Step 2: Topic Naming
+  // Step 2: Existing Sessions Detection
+  if (step === 'existing') {
+    return (
+      <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.9)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000 }}>
+        <div style={{ background: '#1a1a2e', padding: '24px', borderRadius: '16px', width: '500px', border: '1px solid #3a3a5a', boxShadow: '0 25px 50px -12px rgba(0,0,0,0.5)' }}>
+          <h2 style={{ fontSize: '18px', marginBottom: '8px', color: '#fff' }}>📂 {rootFolder}</h2>
+          <p style={{ fontSize: '13px', color: '#6b7280', marginBottom: '20px' }}>Root folder selected</p>
+
+          {existingSessions.length > 0 ? (
+            <>
+              <p style={{ fontSize: '13px', color: '#9ca3af', marginBottom: '12px' }}>Detected {existingSessions.length} existing research session{existingSessions.length > 1 ? 's' : ''}:</p>
+              <div style={{ marginBottom: '20px', maxHeight: '200px', overflow: 'auto' }}>
+                {existingSessions.map((session) => (
+                  <div key={session.path} onClick={() => {
+                    setTopicName(session.name)
+                    setStep('topic')
+                  }}
+                    style={{ padding: '12px 16px', background: '#16162a', border: '1px solid #2a2a4a', borderRadius: '10px', marginBottom: '8px', cursor: 'pointer', color: '#fff', display: 'flex', alignItems: 'center', gap: '12px' }}>
+                    <span style={{ fontSize: '20px' }}>📁</span>
+                    <div>
+                      <div style={{ fontWeight: 500 }}>{session.name}</div>
+                      <div style={{ fontSize: '11px', color: '#6b7280' }}>Continue research</div>
+                    </div>
+                  </div>
+                ))}
+              </div>
+              <div style={{ borderTop: '1px solid #2a2a4a', paddingTop: '16px' }}>
+                <button onClick={() => setStep('topic')} style={{ width: '100%', padding: '12px', background: 'transparent', border: '1px solid #3a3a5a', color: '#a1a1aa', cursor: 'pointer', borderRadius: '10px', fontSize: '14px' }}>
+                  + Start New Research
+                </button>
+              </div>
+            </>
+          ) : (
+            <>
+              <p style={{ fontSize: '13px', color: '#6b7280', marginBottom: '20px' }}>No existing research sessions found in this folder.</p>
+              <button onClick={() => setStep('topic')} style={{ width: '100%', padding: '14px', background: '#7c3aed', border: 'none', color: '#fff', cursor: 'pointer', borderRadius: '10px', fontSize: '15px', fontWeight: 600 }}>
+                Start New Research
+              </button>
+            </>
+          )}
+
+          <button onClick={() => setStep('folder')} style={{ width: '100%', marginTop: '12px', padding: '10px', background: 'transparent', border: 'none', color: '#6b7280', cursor: 'pointer', fontSize: '13px' }}>
+            ← Choose Different Folder
+          </button>
+        </div>
+      </div>
+    )
+  }
+
+  // Step 3: Topic Naming
   if (step === 'topic') {
     return (
       <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.9)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000 }}>
         <div style={{ background: '#1a1a1a', padding: '24px', borderRadius: '12px', width: '500px', border: '1px solid #333' }}>
           <h2 style={{ fontSize: '18px', marginBottom: '16px', color: '#fff' }}>🔬 New Research Session</h2>
-          <p style={{ fontSize: '13px', color: '#888', marginBottom: '16px' }}>Step 2: Name Your Research Topic</p>
+          <p style={{ fontSize: '13px', color: '#888', marginBottom: '16px' }}>Step 3: Name Your Research Topic</p>
           {error && (
             <div style={{ padding: '10px', background: '#3f1515', border: '1px solid #ef4444', borderRadius: '6px', marginBottom: '16px', color: '#ef4444', fontSize: '13px' }}>{error}</div>
           )}
@@ -316,7 +411,7 @@ export function Sparker({ serverUrl, onClose }: SparkerProps) {
             style={{ width: '100%', padding: '12px', background: '#0a0a0a', border: '1px solid #333', borderRadius: '6px', color: '#fff', fontSize: '14px', marginBottom: '16px' }}
             onKeyDown={(e) => { if (e.key === 'Enter' && topicName.trim()) createSparkerSessions(topicName.trim()) }} />
           <div style={{ display: 'flex', gap: '8px' }}>
-            <button onClick={() => setStep('folder')} style={{ padding: '10px 20px', background: '#333', border: 'none', color: '#fff', cursor: 'pointer', borderRadius: '6px' }}>Back</button>
+            <button onClick={() => setStep('existing')} style={{ padding: '10px 20px', background: '#333', border: 'none', color: '#fff', cursor: 'pointer', borderRadius: '6px' }}>Back</button>
             <button onClick={() => topicName.trim() && createSparkerSessions(topicName.trim())} disabled={!topicName.trim() || isCreating}
               style={{ padding: '10px 20px', background: topicName.trim() && !isCreating ? '#22c55e' : '#333', border: 'none', color: topicName.trim() && !isCreating ? '#000' : '#888', cursor: topicName.trim() && !isCreating ? 'pointer' : 'not-allowed', borderRadius: '6px', fontWeight: 'bold' }}>
               {isCreating ? 'Creating...' : 'Create Session'}
@@ -327,7 +422,7 @@ export function Sparker({ serverUrl, onClose }: SparkerProps) {
     )
   }
 
-  // Step 3: Split View Session
+  // Step 4: Split View Session
   return (
     <div style={{ position: 'fixed', inset: 0, background: '#0f0f1a', display: 'flex', flexDirection: 'column', zIndex: 1000, fontFamily: 'Inter, -apple-system, BlinkMacSystemFont, sans-serif' }}>
       {/* Header */}

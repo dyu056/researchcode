@@ -9,7 +9,7 @@ import { useSync } from "../context/sync"
 import { Toast } from "../ui/toast"
 import { useArgs } from "../context/args"
 import { useDirectory } from "../context/directory"
-import { useRouteData } from "@tui/context/route"
+import { useRouteData, useRoute } from "@tui/context/route"
 import { usePromptRef } from "../context/prompt"
 import { Installation } from "@/installation"
 import { useKV } from "../context/kv"
@@ -24,6 +24,7 @@ export function Home() {
   const kv = useKV()
   const { theme } = useTheme()
   const route = useRouteData("home")
+  const navigate = useRoute()
   const promptRef = usePromptRef()
   const command = useCommandDialog()
   const mcp = createMemo(() => Object.keys(sync.data.mcp).length > 0)
@@ -51,6 +52,18 @@ export function Home() {
       category: "System",
       onSelect: (dialog) => {
         kv.set("tips_hidden", !tipsHidden())
+        dialog.clear()
+      },
+    },
+    {
+      title: "New research session",
+      value: "sparker.new",
+      category: "Session",
+      slash: {
+        name: "research",
+      },
+      onSelect: (dialog) => {
+        navigate({ type: "sparker", step: "folder" })
         dialog.clear()
       },
     },

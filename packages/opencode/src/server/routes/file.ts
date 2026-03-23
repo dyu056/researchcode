@@ -6,6 +6,9 @@ import { Ripgrep } from "../../file/ripgrep"
 import { LSP } from "../../lsp"
 import { Instance } from "../../project/instance"
 import { lazy } from "../../util/lazy"
+import { mkdir } from "fs/promises"
+import { dirname } from "path"
+import { errors } from "../error"
 
 export const FileRoutes = lazy(() =>
   new Hono()
@@ -192,6 +195,40 @@ export const FileRoutes = lazy(() =>
       async (c) => {
         const content = await File.status()
         return c.json(content)
+      },
+    )
+    .post(
+      "/folder",
+      describeRoute({
+        summary: "Create folder",
+        description: "Create a folder at the specified path.",
+        operationId: "folder.create",
+        responses: {
+          200: {
+            description: "Folder created",
+            content: {
+              "application/json": {
+                schema: resolver(z.object({ success: z.boolean(), path: z.string() })),
+              },
+            },
+          },
+          ...errors(400),
+        },
+      }),
+      validator(
+        "json",
+        z.object({
+          path: z.string().describe("The folder path to create"),
+        }),
+      ),
+      async (c) => {
+        const { path } = c.req.valid("json")
+        try {
+          await mkdir(path, { recursive: true })
+          return c.json({ success: true, path })
+        } catch (err: any) {
+          return c.json({ success: false, error: err.message }, { status: 400 })
+        }
       },
     ),
 )

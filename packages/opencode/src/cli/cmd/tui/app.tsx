@@ -26,6 +26,7 @@ import { ThemeProvider, useTheme } from "@tui/context/theme"
 import { Home } from "@tui/routes/home"
 import { Session } from "@tui/routes/session"
 import { RelayPanel } from "@tui/routes/relay-panel"
+import { Sparker } from "@tui/routes/sparker"
 import { PromptHistoryProvider } from "./component/prompt/history"
 import { FrecencyProvider } from "./component/prompt/frecency"
 import { PromptStashProvider } from "./component/prompt/stash"
@@ -781,6 +782,9 @@ function App() {
         </Match>
         <Match when={route.data.type === "relay-panel"}>
           <RelayPanel />
+        </Match>
+        <Match when={route.data.type === "sparker"}>
+          <Sparker />
         </Match>
       </Switch>
     </box>

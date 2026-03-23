@@ -18,7 +18,16 @@ export type RelayRoute = {
   type: "relay-panel"
 }
 
-export type Route = HomeRoute | SessionRoute | RelayRoute
+export type SparkerRoute = {
+  type: "sparker"
+  step: "folder" | "topic" | "session"
+  rootFolder?: string
+  topic?: string
+  sessionID?: string
+  surveyorSessionID?: string
+}
+
+export type Route = HomeRoute | SessionRoute | RelayRoute | SparkerRoute
 
 export const { use: useRoute, provider: RouteProvider } = createSimpleContext({
   name: "Route",
