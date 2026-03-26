@@ -12,6 +12,7 @@ import { ProviderTransform } from "../provider/transform"
 import PROMPT_GENERATE from "./generate.txt"
 import PROMPT_COMPACTION from "./prompt/compaction.txt"
 import PROMPT_EXPLORE from "./prompt/explore.txt"
+import PROMPT_PIONEER from "./prompt/pioneer.txt"
 import PROMPT_SUMMARY from "./prompt/summary.txt"
 import PROMPT_TITLE from "./prompt/title.txt"
 import { PermissionNext } from "@/permission"
@@ -200,6 +201,31 @@ export namespace Agent {
           user,
         ),
         prompt: PROMPT_SUMMARY,
+      },
+      pioneer: {
+        name: "pioneer",
+        description: `ML Fine-tuning Pioneer Agent. Helps users fine-tune open-source models through a systematic workflow: model selection, loss derivation, data collection, processing, aggregation, training code, and experiments.`,
+        prompt: PROMPT_PIONEER,
+        permission: PermissionNext.merge(
+          defaults,
+          PermissionNext.fromConfig({
+            todoread: "deny",
+            todowrite: "deny",
+            websearch: "allow",
+            webfetch: "allow",
+            bash: "allow",
+            read: "allow",
+            write: "allow",
+            codesearch: "allow",
+            grep: "allow",
+            glob: "allow",
+            list: "allow",
+          }),
+          user,
+        ),
+        options: {},
+        mode: "subagent",
+        native: true,
       },
     }
 
