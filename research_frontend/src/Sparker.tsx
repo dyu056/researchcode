@@ -32,7 +32,37 @@ interface Message {
   parts: MessagePart[]
 }
 
-const DEFAULT_DIRECTORY = '/Users/danielyu/Documents/claude_code_modifications/researchcode/packages/opencode'
+const DEFAULT_DIRECTORY = 'Research_Sessions'
+
+// Agent Memory Constants
+const SPARKER_SOUL = `You are a Socratic research companion - a thinking partner, not an answer provider. Your role is to guide users to discover insights through questioning, not to give them direct answers. You help users deepen their understanding by asking probing questions, identifying gaps in reasoning, and challenging assumptions.`
+
+const SPARKER_AGENT = `Your Socratic questioning methodology:
+
+PHASE 1 - Core Mental Models
+Ask: "What are the 5 core mental models that every expert in this field shares?"
+
+PHASE 2 - Expert Disagreements
+Ask: "What are the 3 places where experts fundamentally disagree, and each side's strongest argument?"
+
+PHASE 3 - Deep Understanding Questions
+Generate questions that expose whether someone deeply understands vs. just memorized facts.
+
+PHASE 4 - Follow-up Learning
+When user gives wrong answers: "Explain why this is wrong and what you're missing."
+
+Never provide direct answers. Guide users to discover insights through questioning.`
+
+const SURVEYOR_SOUL = `You are a diligent academic researcher seeking comprehensive, rigorous literature review. Your mission is to find the most influential research from top university labs and trace how ideas evolved through citation trees.`
+
+const SURVEYOR_AGENT = `Your methodology:
+1. Find TOP UNIVERSITY LABS doing this research (MIT, Stanford, Berkeley, Carnegie Mellon, Harvard, Oxford, Cambridge, etc.)
+2. Only locate literatures from those elite teams
+3. Rank papers by influence index (citation count, venue prestige, award winners)
+4. Trace paper lineage - find citation trees showing how work evolved
+5. Identify papers that USE tree diagrams to represent citations
+6. Write literature review in LaTeX format (like top academic reviews)
+7. Save to: literature-review.tex, top-labs.md, citation-trees.md`
 
 // API client helper
 async function apiRequest<T>(baseUrl: string, method: string, path: string, body?: any, directory: string = DEFAULT_DIRECTORY): Promise<T> {
@@ -66,7 +96,7 @@ interface SparkerProps {
 }
 
 export function Sparker({ serverUrl, onClose }: SparkerProps) {
-  const [step, setStep] = useState<'folder' | 'existing' | 'topic' | 'session'>('folder')
+  const [step, setStep] = useState<'folder' | 'existing' | 'topic' | 'session'>('existing')
   const [rootFolder, setRootFolder] = useState('.')
   const [rootFolderHandle, setRootFolderHandle] = useState<FileSystemDirectoryHandle | null>(null)
   const [topicName, setTopicName] = useState('')
@@ -74,6 +104,9 @@ export function Sparker({ serverUrl, onClose }: SparkerProps) {
   const [foldersLoading, setFoldersLoading] = useState(true)
   const [currentPath, setCurrentPath] = useState('.')
   const [isCreating, setIsCreating] = useState(false)
+
+  // User-configurable session directory (where opencode sessions and memory files live)
+  const [sessionDirectory, setSessionDirectory] = useState(DEFAULT_DIRECTORY)
 
   // Existing research sessions detected in root folder
   const [existingSessions, setExistingSessions] = useState<{ name: string; path: string }[]>([])
@@ -101,13 +134,13 @@ export function Sparker({ serverUrl, onClose }: SparkerProps) {
     try {
       const sessions: { name: string; path: string }[] = []
 
-      // Use File System Access API to list directories in the user's selected folder
-      if (rootFolderHandle) {
-        for await (const [name, handle] of rootFolderHandle.entries()) {
-          if (handle.kind === 'directory' && !name.startsWith('.')) {
-            sessions.push({ name, path: name })
-          }
-        }
+      // Use server API to list directories in sessionDirectory
+      const listUrl = `${serverUrl}/file?path=${encodeURIComponent(sessionDirectory)}`
+      const response = await fetch(listUrl)
+      if (response.ok) {
+        const files = await response.json() as Array<{ name: string; type: string; path: string }>
+        const dirs = files.filter((f: any) => f.type === 'directory' && !f.name.startsWith('.'))
+        sessions.push(...dirs.map((d: any) => ({ name: d.name, path: d.name })))
       }
 
       setExistingSessions(sessions)
@@ -145,31 +178,125 @@ export function Sparker({ serverUrl, onClose }: SparkerProps) {
   const [editingModelFor, setEditingModelFor] = useState<'sparker' | 'surveyor' | null>(null)
   const [tempModel, setTempModel] = useState<ModelConfig>({})
 
+  // Surveyor 4-tab interface
+  type SurveyorTab = 'literature' | 'console' | 'labs' | 'trees'
+  const [surveyorTab, setSurveyorTab] = useState<SurveyorTab>('literature')
+
+  // Surveyor output content for each tab
+  const [surveyorContent, setSurveyorContent] = useState<{
+    literature: string
+    console: string[]
+    labs: { name: string; url: string; description: string; papers: { title: string; authors: string; citations: string; influenceIndex: number }[]; influenceIndex: number }[]
+    trees: { labName: string; paper: string; citations: string }[]
+  }>({
+    literature: '',
+    console: [],
+    labs: [],
+    trees: []
+  })
+
+  // Typed terminal entries with color info
+  type TerminalEntryType = 'separator' | 'user' | 'reasoning' | 'text' | 'tool_call' | 'tool_input' | 'tool_output' | 'status' | 'info'
+  interface TerminalEntry {
+    type: TerminalEntryType
+    content: string
+  }
+  const [terminalLines, setTerminalLines] = useState<TerminalEntry[]>([])
+
   const messagesEndRef = useRef<HTMLDivElement>(null)
+  const consoleScrollRef = useRef<HTMLDivElement>(null)
   const surveyorInitializedRef = useRef(false)
+
+  // Surveyor initial prompt with methodology
+  const surveyorInitialPrompt = `You are Surveyor - an academic literature researcher. Your mission is to conduct a comprehensive literature review on "${topicName}".
+
+## YOUR METHODOLOGY:
+
+1. Find TOP UNIVERSITY LABS doing research on this topic
+   - Focus on: MIT, Stanford, Berkeley, Carnegie Mellon, Harvard, Oxford, Cambridge
+   - Check: lab websites, arXiv, Google Scholar
+
+2. LOCATE ONLY papers from elite university teams
+
+3. RANK by influence:
+   - Citation count
+   - Venue prestige (NeurIPS, ICML, Nature, Science, etc.)
+   - Award winners
+   - Assign each lab an "Influence Index" (0-100)
+
+4. TRACE paper lineage - build citation trees
+
+5. OUTPUT YOUR FINDINGS in structured format with Labs → Papers hierarchy:
+
+For each lab, output BOTH a structured block AND a markdown file:
+[LABS]
+- Lab Name: <lab name>
+  Influence Index: <0-100>
+  URL: <official link>
+  Description: <what they do and why they're influential>
+  [PAPERS]
+  - Paper: <paper title>
+    Authors: <authors>
+    Citations: <citation count and info>
+    Influence: <0-100>
+  [/PAPERS]
+[/LABS]
+
+For citation trees:
+[TREES]
+- Paper: <title>
+  Lab: <lab name>
+  Citations: <full citation tree and lineage information>
+[/TREES]
+
+For the literature review:
+[LITERATURE_REVIEW]
+<LaTeX formatted literature review with sections for Introduction, Top Labs, Papers, and Conclusions>
+[/LITERATURE_REVIEW]
+
+SURVEYOR FILE STRUCTURE:
+The server's working directory is: /Volumes/UBag/Documents/claude_code_modifications/researchcode/packages/opencode
+Your session's research folder is at: ${topicName} (this is your session's working directory)
+Write files to the surveyor/ subdirectory within your session's working directory.
+
+ABSOLUTE RULE:
+- NEVER use absolute paths like /Volumes/... or /Users/... in any command
+- ALWAYS use the Write tool with path: surveyor/filename.tex (relative to your session directory)
+- Example: {"path": "surveyor/literature-review.tex", "content": "..."}
+
+WRONG (DO NOT USE):
+- {"path": "Research_Sessions/...", ...}
+- {"path": "/Volumes/.../surveyor/...", ...}
+- mkdir -p /Volumes/.../surveyor
+- echo "content" > /Volumes/.../surveyor/file.tex
+
+CORRECT (USE THIS):
+- Use Write tool with path: surveyor/literature-review.tex
+- Use Write tool with path: surveyor/top-labs.md
+- Use Write tool with path: surveyor/citation-trees.md
+
+Start by searching for top labs working on "${topicName}". After finding labs, search for their key papers and build citation trees. OUTPUT THE STRUCTURED BLOCKS IN YOUR RESPONSE so the UI can parse them.`
 
   // Send initial literature review prompt to surveyor when session starts
   useEffect(() => {
     if (surveyorSessionId && step === 'session' && !surveyorInitializedRef.current) {
       surveyorInitializedRef.current = true
-      const initialPrompt = `You are a Surveyor web research agent. Your task is to conduct a literature review on "${topicName}".
-
-Please:
-1. Search the web for relevant academic papers and sources on this topic
-2. Save any important findings to the surveyor/ folder in the project directory
-3. Provide a summary of the key papers and findings
-
-Start by searching for relevant papers and sources.`
-
-      sendMessage(surveyorSessionId, initialPrompt, true)
+      sendMessage(surveyorSessionId, surveyorInitialPrompt, true)
     }
-  }, [surveyorSessionId, step])
+  }, [surveyorSessionId, step, surveyorInitialPrompt])
 
   useEffect(() => {
     if (step === 'folder') {
       fetchFolders(currentPath)
     }
   }, [step, currentPath])
+
+  // Check for existing sessions on mount when step is 'existing'
+  useEffect(() => {
+    if (step === 'existing') {
+      checkExistingSessions(sessionDirectory)
+    }
+  }, [step, sessionDirectory])
 
   const fetchFolders = async (path: string) => {
     setFoldersLoading(true)
@@ -201,7 +328,8 @@ Start by searching for relevant papers and sources.`
         await topicHandle.getDirectoryHandle('surveyor', { create: true })
       } else {
         // Fallback to server-side folder creation if no handle (e.g., in non-supporting browsers)
-        const folderPath = `${rootFolder}/${topic}`
+        // Use sessionDirectory which points to the shared Research_Sessions folder
+        const folderPath = `${sessionDirectory}/${topic}`
         const surveyorPath = `${folderPath}/surveyor`
         await fetch(`${serverUrl}/folder`, {
           method: 'POST',
@@ -220,6 +348,7 @@ Start by searching for relevant papers and sources.`
         {
           title: `${topic} - Sparker`,
           model: sparkerModel,
+          directory: DEFAULT_DIRECTORY,
         }
       )
 
@@ -232,6 +361,7 @@ Start by searching for relevant papers and sources.`
         {
           title: `${topic} - Surveyor`,
           model: surveyorModel,
+          directory: `${DEFAULT_DIRECTORY}/${topic}`,
         }
       )
 
@@ -265,7 +395,7 @@ Start by searching for relevant papers and sources.`
     else setSparkerLoading(true)
 
     try {
-      const response = await fetch(`${serverUrl}/session/${sessionId}/prompt_async?directory=${encodeURIComponent(DEFAULT_DIRECTORY)}`, {
+      const response = await fetch(`${serverUrl}/session/${sessionId}/prompt_async`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ parts: [{ type: 'text', text: content }] })
@@ -305,6 +435,213 @@ Start by searching for relevant papers and sources.`
     }, 5000)
     return () => clearInterval(interval)
   }, [step, sparkerSessionId, surveyorSessionId, fetchMessages])
+
+  // Parse Surveyor messages to extract content for tabs
+  const parseSurveyorMessages = useCallback((messages: Message[]) => {
+    const consoleLines: string[] = []
+    const terminalOutput: TerminalEntry[] = []
+    let literatureContent = ''
+    const labsMap: Map<string, { name: string; url: string; description: string; papers: { title: string; authors: string; citations: string; influenceIndex: number }[]; influenceIndex: number }> = new Map()
+    const treePapers: { labName: string; paper: string; citations: string }[] = []
+
+    messages.forEach(msg => {
+      const isUser = msg.info.role === 'user'
+      const isAssistant = msg.info.role === 'assistant'
+
+      // Add separator for user messages
+      if (isUser) {
+        terminalOutput.push({ type: 'separator', content: '─'.repeat(50) })
+        terminalOutput.push({ type: 'user', content: '👤 User:' })
+      }
+
+      msg.parts.forEach(part => {
+        // Show reasoning/thinking step
+        if (part.type === 'reasoning' && part.text && part.text.trim()) {
+          terminalOutput.push({ type: 'reasoning', content: `💭 ${part.text}` })
+          consoleLines.push(`💭 ${part.text}`)
+        }
+
+        // Show text content from assistant
+        if (part.type === 'text' && part.text && isAssistant) {
+          terminalOutput.push({ type: 'text', content: part.text })
+          consoleLines.push(part.text)
+
+          // Parse [LITERATURE_REVIEW] blocks
+          const litMatch = part.text.match(/\[LITERATURE_REVIEW\]([\s\S]*?)\[\/LITERATURE_REVIEW\]/i)
+          if (litMatch) {
+            literatureContent = litMatch[1].trim()
+          }
+
+          // Fallback: look for raw LaTeX patterns
+          if (!literatureContent && (part.text.includes('\\documentclass') || part.text.includes('\\section{') || part.text.includes('\\begin{document}'))) {
+            const docMatch = part.text.match(/(\\begin\{document\}([\s\S]*?)\\end\{document\})/)
+            if (docMatch) {
+              literatureContent = docMatch[1]
+            } else if (part.text.includes('\\begin{')) {
+              literatureContent = part.text
+            }
+          }
+
+          // Parse [LABS] blocks
+          const labsBlockRegex = /\[LABS\]([\s\S]*?)\[\/LABS\]/gi
+          let labsBlockMatch
+          while ((labsBlockMatch = labsBlockRegex.exec(part.text)) !== null) {
+            const labsText = labsBlockMatch[1]
+            const labEntryRegex = /-\s*Lab\s+Name:\s*(.+?)(?=(?:-\s*Lab\s+Name:)|(?:\[LABS\])|(?:\[PAPERS\])|(?:\[TREES\])|(?:\[LITERATURE_REVIEW\])|(?:\[$)|(?:<\/)|$)/gi
+            let labEntryMatch
+            while ((labEntryMatch = labEntryRegex.exec(labsText)) !== null) {
+              const entry = labEntryMatch[1]
+              const nameMatch = entry.match(/^(.+?)(?:\s+Influence\s+Index:|$)/i)
+              const influenceMatch = entry.match(/Influence\s+Index:\s*(\d+)/i)
+              const urlMatch = entry.match(/URL:\s*(https?:\/\/[^\s\]]+)/i)
+              const descMatch = entry.match(/Description:\s*(.+?)(?:\s*\[PAPERS\]|$)/i)
+
+              // Parse papers under this lab
+              const papers: { title: string; authors: string; citations: string; influenceIndex: number }[] = []
+              const papersMatch = entry.match(/\[PAPERS\]([\s\S]*?)\[\/PAPERS\]/i)
+              if (papersMatch) {
+                const papersText = papersMatch[1]
+                const paperRegex = /-\s*Paper:\s*(.+?)(?=(?:-\s*Paper:)|(?:\[PAPERS\])|(?:\[LABS\])|$)/gi
+                let paperMatch
+                while ((paperMatch = paperRegex.exec(papersText)) !== null) {
+                  const paperText = paperMatch[1]
+                  const paperTitleMatch = paperText.match(/^(.+?)(?:\s+Authors?:|$)/i)
+                  const paperAuthorsMatch = paperText.match(/Authors?:\s*(.+?)(?:\s+Citations?:|$)/i)
+                  const paperCitationsMatch = paperText.match(/Citations?:\s*(.+?)(?:\s+Influence:|$)/i)
+                  const paperInfluenceMatch = paperText.match(/Influence:\s*(\d+)/i)
+
+                  if (paperTitleMatch) {
+                    papers.push({
+                      title: paperTitleMatch[1].trim(),
+                      authors: paperAuthorsMatch ? paperAuthorsMatch[1].trim() : '',
+                      citations: paperCitationsMatch ? paperCitationsMatch[1].trim() : '',
+                      influenceIndex: paperInfluenceMatch ? parseInt(paperInfluenceMatch[1]) : 0
+                    })
+                  }
+                }
+              }
+
+              if (nameMatch) {
+                const labName = nameMatch[1].trim()
+                labsMap.set(labName, {
+                  name: labName,
+                  url: urlMatch ? urlMatch[1] : '',
+                  description: descMatch ? descMatch[1].trim() : '',
+                  papers: papers,
+                  influenceIndex: influenceMatch ? parseInt(influenceMatch[1]) : 0
+                })
+              }
+            }
+          }
+
+          // Parse [TREES] blocks
+          const treesMatch = part.text.match(/\[TREES\]([\s\S]*?)\[\/TREES\]/i)
+          if (treesMatch) {
+            const treesText = treesMatch[1]
+            const treeEntries = treesText.split(/(?=^\s*[-*])/m).filter(t => t.trim())
+            treeEntries.forEach(treeEntry => {
+              const paperMatch = treeEntry.match(/Paper:\s*(.+)/i)
+              const labMatch = treeEntry.match(/Lab:\s*(.+)/i)
+              if (paperMatch) {
+                treePapers.push({
+                  labName: labMatch ? labMatch[1].trim() : 'Unknown Lab',
+                  paper: paperMatch[1].trim(),
+                  citations: treeEntry
+                })
+              }
+            })
+          }
+        }
+
+        // Show tool calls
+        if (part.type === 'tool') {
+          const toolName = part.tool || 'unknown'
+          const status = part.state?.status || 'running'
+          const input = part.state?.input
+          const output = part.state?.output
+
+          terminalOutput.push({ type: 'tool_call', content: `$ ${toolName}` })
+          consoleLines.push(`$ ${toolName}`)
+
+          if (input) {
+            const inputStr = typeof input === 'string' ? input : JSON.stringify(input, null, 2)
+            if (inputStr) {
+              terminalOutput.push({ type: 'tool_input', content: inputStr })
+              consoleLines.push(`> ${inputStr}`)
+            }
+          }
+
+          if (output) {
+            const outputStr = typeof output === 'string' ? output : JSON.stringify(output, null, 2)
+            if (outputStr) {
+              terminalOutput.push({ type: 'tool_output', content: outputStr })
+              consoleLines.push(outputStr)
+            }
+          }
+
+          if (status !== 'completed') {
+            terminalOutput.push({ type: 'status', content: `[${status}]` })
+            consoleLines.push(`[${status}]`)
+          }
+          terminalOutput.push({ type: 'info', content: '' })
+        }
+      })
+    })
+
+    const sortedLabs = Array.from(labsMap.values()).sort((a, b) => b.influenceIndex - a.influenceIndex)
+
+    setSurveyorContent(prev => ({
+      literature: literatureContent || prev.literature,
+      console: consoleLines.slice(-200),
+      labs: sortedLabs.slice(0, 10),
+      trees: treePapers.slice(0, 20)
+    }))
+    setTerminalLines(terminalOutput.slice(-500))
+  }, [])
+
+  // Parse Surveyor messages when they update
+  useEffect(() => {
+    if (surveyorMessages.length > 0) {
+      parseSurveyorMessages(surveyorMessages)
+    }
+  }, [surveyorMessages, parseSurveyorMessages])
+
+  // Auto-scroll console to bottom when terminalLines update
+  useEffect(() => {
+    if (consoleScrollRef.current) {
+      consoleScrollRef.current.scrollTop = consoleScrollRef.current.scrollHeight
+    }
+  }, [terminalLines])
+
+  // Render terminal-style message with colors
+  const renderTerminalEntry = (entry: TerminalEntry, idx: number) => {
+    const colors: Record<TerminalEntryType, string> = {
+      separator: '#3a3a5a',
+      user: '#58a6ff',
+      reasoning: '#d29922',
+      text: '#ffffff',
+      tool_call: '#3fb950',
+      tool_input: '#f78166',
+      tool_output: '#8b949e',
+      status: '#a78bfa',
+      info: '#6b7280'
+    }
+    return (
+      <div key={idx} style={{
+        fontFamily: 'Monaco, Menlo, "Ubuntu Mono", monospace',
+        fontSize: '12px',
+        lineHeight: '1.4',
+        color: colors[entry.type] || '#ffffff',
+        whiteSpace: 'pre-wrap',
+        wordBreak: 'break-word',
+        padding: entry.type === 'separator' ? '8px 0' : '2px 0',
+        borderLeft: entry.type === 'user' ? '2px solid #58a6ff' : entry.type === 'reasoning' ? '2px solid #d29922' : 'none',
+        paddingLeft: entry.type === 'user' || entry.type === 'reasoning' ? '8px' : '0'
+      }}>
+        {entry.content}
+      </div>
+    )
+  }
 
   const renderMessage = (msg: Message, isUser: boolean) => (
     <div style={{
@@ -370,7 +707,7 @@ Start by searching for relevant papers and sources.`
     return (
       <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.9)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000 }}>
         <div style={{ background: '#1a1a2e', padding: '24px', borderRadius: '16px', width: '500px', border: '1px solid #3a3a5a', boxShadow: '0 25px 50px -12px rgba(0,0,0,0.5)' }}>
-          <h2 style={{ fontSize: '18px', marginBottom: '8px', color: '#fff' }}>📂 {rootFolder}</h2>
+          <h2 style={{ fontSize: '18px', marginBottom: '8px', color: '#fff' }}>📂 {sessionDirectory}</h2>
           <p style={{ fontSize: '13px', color: '#6b7280', marginBottom: '20px' }}>Root folder selected</p>
 
           {existingSessions.length > 0 ? (
@@ -406,8 +743,24 @@ Start by searching for relevant papers and sources.`
             </>
           )}
 
-          <button onClick={() => setStep('folder')} style={{ width: '100%', marginTop: '12px', padding: '10px', background: 'transparent', border: 'none', color: '#6b7280', cursor: 'pointer', fontSize: '13px' }}>
-            ← Choose Different Folder
+          <button onClick={() => {
+            fetch(`${serverUrl}/exec`, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ command: `open "/Volumes/UBag/Documents/claude_code_modifications/researchcode/packages/opencode/${sessionDirectory}"`, directory: '/tmp' })
+            })
+          }} style={{ width: '100%', marginTop: '8px', padding: '10px', background: 'transparent', border: 'none', color: '#6b7280', cursor: 'pointer', fontSize: '13px' }}>
+            🔍 Open Folder
+          </button>
+          <button onClick={async () => {
+            const aliasCommand = `ln -sf "/Volumes/UBag/Documents/claude_code_modifications/researchcode/packages/opencode/${sessionDirectory}" "/Users/danielyu/Documents/${sessionDirectory}"`
+            await fetch(`${serverUrl}/exec`, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ command: aliasCommand, directory: '/Users/danielyu/Documents' })
+            })
+          }} style={{ width: '100%', marginTop: '8px', padding: '10px', background: 'transparent', border: 'none', color: '#6b7280', cursor: 'pointer', fontSize: '13px' }}>
+            🔗 Create Alias in Documents
           </button>
         </div>
       </div>
@@ -466,27 +819,121 @@ Start by searching for relevant papers and sources.`
               <div style={{ width: '28px', height: '28px', borderRadius: '8px', background: 'linear-gradient(135deg, #10b981, #059669)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '14px' }}>🔍</div>
               <div>
                 <div style={{ color: '#10b981', fontWeight: 600, fontSize: '14px' }}>Surveyor</div>
-                <div style={{ color: '#6b7280', fontSize: '11px' }}>Web Research Agent</div>
+                <div style={{ color: '#6b7280', fontSize: '11px' }}>Literature Review Agent</div>
               </div>
             </div>
+            {/* 4-Tab Interface */}
+            <div style={{ display: 'flex', gap: '4px', marginTop: '12px', background: '#0f0f1a', borderRadius: '8px', padding: '4px' }}>
+              {(['literature', 'console', 'labs', 'trees'] as SurveyorTab[]).map(tab => (
+                <button key={tab} onClick={() => setSurveyorTab(tab)}
+                  style={{
+                    flex: 1, padding: '8px 12px', border: 'none', borderRadius: '6px',
+                    background: surveyorTab === tab ? '#10b981' : 'transparent',
+                    color: surveyorTab === tab ? '#000' : '#9ca3af',
+                    cursor: 'pointer', fontSize: '12px', fontWeight: 500,
+                    textTransform: 'capitalize'
+                  }}>
+                  {tab === 'literature' ? '📄 Review' : tab === 'console' ? '💻 Console' : tab === 'labs' ? '🏛️ Labs' : '🌳 Trees'}
+                </button>
+              ))}
+            </div>
           </div>
-          <div style={{ flex: 1, overflow: 'auto', padding: '20px', display: 'flex', flexDirection: 'column' }}>
-            {surveyorMessages.length === 0 ? (
-              <div style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', color: '#4b5563' }}>
-                <div style={{ fontSize: '40px', marginBottom: '12px' }}>🔍</div>
-                <div style={{ fontSize: '14px' }}>Surveyor is ready to research</div>
+
+          {/* Tab Content */}
+          <div style={{ flex: 1, overflow: 'auto', display: 'flex', flexDirection: 'column' }}>
+            {/* Literature Review Tab */}
+            {surveyorTab === 'literature' && (
+              <div style={{ flex: 1, overflow: 'auto', padding: '16px' }}>
+                {surveyorContent.literature ? (
+                  <div style={{ fontFamily: 'Monaco, Menlo, monospace', fontSize: '13px', lineHeight: '1.6', color: '#e5e5e5', whiteSpace: 'pre-wrap' }}>
+                    {surveyorContent.literature}
+                  </div>
+                ) : (
+                  <div style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', color: '#4b5563', height: '100%' }}>
+                    <div style={{ fontSize: '40px', marginBottom: '12px' }}>📄</div>
+                    <div style={{ fontSize: '14px' }}>Literature review will appear here</div>
+                  </div>
+                )}
               </div>
-            ) : (
-              surveyorMessages.map((msg, idx) => renderMessage(msg, msg.info.role === 'user'))
             )}
-            {surveyorLoading && (
-              <div style={{ display: 'flex', alignItems: 'center', gap: '8px', color: '#10b981', padding: '12px' }}>
-                <div style={{ width: '8px', height: '8px', borderRadius: '50%', background: '#10b981', animation: 'pulse 1.5s infinite' }}></div>
-                Surveyor is researching...
+
+            {/* Console Tab */}
+            {surveyorTab === 'console' && (
+              <div ref={consoleScrollRef} style={{ flex: 1, overflow: 'auto', padding: '16px', background: '#0a0a0a' }}>
+                {terminalLines.length > 0 ? (
+                  terminalLines.map((entry, idx) => renderTerminalEntry(entry, idx))
+                ) : (
+                  <div style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', color: '#4b5563', height: '100%' }}>
+                    <div style={{ fontSize: '40px', marginBottom: '12px' }}>💻</div>
+                    <div style={{ fontSize: '14px' }}>Console output will appear here</div>
+                  </div>
+                )}
               </div>
             )}
-            <div ref={messagesEndRef} />
+
+            {/* Labs Tab */}
+            {surveyorTab === 'labs' && (
+              <div style={{ flex: 1, overflow: 'auto', padding: '16px' }}>
+                {surveyorContent.labs.length > 0 ? (
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+                    {surveyorContent.labs.map((lab, idx) => (
+                      <div key={idx} style={{ background: '#16162a', borderRadius: '10px', padding: '14px', border: '1px solid #2a2a4a' }}>
+                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '8px' }}>
+                          <div style={{ color: '#10b981', fontWeight: 600, fontSize: '14px' }}>{lab.name}</div>
+                          <div style={{ background: '#10b981', color: '#000', padding: '2px 8px', borderRadius: '10px', fontSize: '11px', fontWeight: 600 }}>
+                            {lab.influenceIndex}
+                          </div>
+                        </div>
+                        {lab.url && <a href={lab.url} target="_blank" rel="noopener" style={{ color: '#58a6ff', fontSize: '12px', textDecoration: 'none' }}>{lab.url}</a>}
+                        <p style={{ color: '#9ca3af', fontSize: '12px', marginTop: '6px' }}>{lab.description}</p>
+                        {lab.papers.length > 0 && (
+                          <div style={{ marginTop: '10px', paddingTop: '10px', borderTop: '1px solid #2a2a4a' }}>
+                            <div style={{ color: '#6b7280', fontSize: '11px', marginBottom: '6px' }}>Papers ({lab.papers.length})</div>
+                            {lab.papers.slice(0, 3).map((paper, pIdx) => (
+                              <div key={pIdx} style={{ fontSize: '12px', marginBottom: '6px' }}>
+                                <div style={{ color: '#e5e5e5' }}>{paper.title}</div>
+                                <div style={{ color: '#6b7280', fontSize: '11px' }}>{paper.authors} • {paper.citations}</div>
+                              </div>
+                            ))}
+                          </div>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                ) : (
+                  <div style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', color: '#4b5563', height: '100%' }}>
+                    <div style={{ fontSize: '40px', marginBottom: '12px' }}>🏛️</div>
+                    <div style={{ fontSize: '14px' }}>Top labs will appear here</div>
+                  </div>
+                )}
+              </div>
+            )}
+
+            {/* Trees Tab */}
+            {surveyorTab === 'trees' && (
+              <div style={{ flex: 1, overflow: 'auto', padding: '16px' }}>
+                {surveyorContent.trees.length > 0 ? (
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+                    {surveyorContent.trees.map((tree, idx) => (
+                      <div key={idx} style={{ background: '#16162a', borderRadius: '10px', padding: '14px', border: '1px solid #2a2a4a' }}>
+                        <div style={{ color: '#10b981', fontWeight: 600, fontSize: '13px', marginBottom: '4px' }}>{tree.paper}</div>
+                        <div style={{ color: '#6b7280', fontSize: '11px', marginBottom: '8px' }}>{tree.labName}</div>
+                        <pre style={{ color: '#8b949e', fontSize: '11px', fontFamily: 'Monaco, Menlo, monospace', whiteSpace: 'pre-wrap', overflow: 'auto' }}>
+                          {tree.citations}
+                        </pre>
+                      </div>
+                    ))}
+                  </div>
+                ) : (
+                  <div style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', color: '#4b5563', height: '100%' }}>
+                    <div style={{ fontSize: '40px', marginBottom: '12px' }}>🌳</div>
+                    <div style={{ fontSize: '14px' }}>Citation trees will appear here</div>
+                  </div>
+                )}
+              </div>
+            )}
           </div>
+
           <div style={{ padding: '16px 20px', background: '#16162a', borderTop: '1px solid #2a2a4a' }}>
             <div style={{ display: 'flex', gap: '10px', alignItems: 'center' }}>
               <input type="text" value={surveyorInput} onChange={(e) => setSurveyorInput(e.target.value)}

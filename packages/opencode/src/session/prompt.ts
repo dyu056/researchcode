@@ -295,6 +295,10 @@ export namespace SessionPrompt {
 
     let step = 0
     const session = await Session.get(sessionID)
+    // Use session's directory if different from Instance.directory, otherwise use Instance.directory
+    const sessionCwd = session.directory === Instance.directory
+      ? Instance.directory
+      : path.join(Instance.directory, session.directory)
     while (true) {
       SessionStatus.set(sessionID, { type: "busy" })
       log.info("loop", { step, sessionID })
@@ -365,7 +369,7 @@ export namespace SessionPrompt {
           agent: task.agent,
           variant: lastUser.variant,
           path: {
-            cwd: Instance.directory,
+            cwd: sessionCwd,
             root: Instance.worktree,
           },
           cost: 0,
@@ -577,7 +581,7 @@ export namespace SessionPrompt {
           agent: agent.name,
           variant: lastUser.variant,
           path: {
-            cwd: Instance.directory,
+            cwd: sessionCwd,
             root: Instance.worktree,
           },
           cost: 0,
@@ -755,12 +759,16 @@ export namespace SessionPrompt {
     using _ = log.time("resolveTools")
     const tools: Record<string, AITool> = {}
 
+    const sessionCwd =
+      input.session.directory === Instance.directory
+        ? Instance.directory
+        : path.join(Instance.directory, input.session.directory)
     const context = (args: any, options: ToolCallOptions): Tool.Context => ({
       sessionID: input.session.id,
       abort: options.abortSignal!,
       messageID: input.processor.message.id,
       callID: options.toolCallId,
-      extra: { model: input.model, bypassAgentCheck: input.bypassAgentCheck },
+      extra: { model: input.model, bypassAgentCheck: input.bypassAgentCheck, sessionCwd },
       agent: input.agent.name,
       messages: input.messages,
       metadata: async (val: { title?: string; metadata?: any }) => {
@@ -1527,6 +1535,10 @@ NOTE: At any point in time through this workflow you should feel free to ask the
     })
 
     const session = await Session.get(input.sessionID)
+    // Use session's directory if different from Instance.directory, otherwise use Instance.directory
+    const sessionCwd = session.directory === Instance.directory
+      ? Instance.directory
+      : path.join(Instance.directory, session.directory)
     if (session.revert) {
       await SessionRevert.cleanup(session)
     }
@@ -1564,7 +1576,7 @@ NOTE: At any point in time through this workflow you should feel free to ask the
       agent: input.agent,
       cost: 0,
       path: {
-        cwd: Instance.directory,
+        cwd: sessionCwd,
         root: Instance.worktree,
       },
       time: {
@@ -1654,7 +1666,7 @@ NOTE: At any point in time through this workflow you should feel free to ask the
     const matchingInvocation = invocations[shellName] ?? invocations[""]
     const args = matchingInvocation?.args
 
-    const cwd = Instance.directory
+    const cwd = sessionCwd
     const shellEnv = await Plugin.trigger(
       "shell.env",
       { cwd, sessionID: input.sessionID, callID: part.callID },

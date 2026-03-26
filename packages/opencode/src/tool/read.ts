@@ -30,8 +30,9 @@ export const ReadTool = Tool.define("read", {
       throw new Error("offset must be greater than or equal to 1")
     }
     let filepath = params.filePath
+    const baseDir = ctx.extra?.sessionCwd ?? Instance.directory
     if (!path.isAbsolute(filepath)) {
-      filepath = path.resolve(Instance.directory, filepath)
+      filepath = path.resolve(baseDir, filepath)
     }
     const title = path.relative(Instance.worktree, filepath)
 
