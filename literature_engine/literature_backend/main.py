@@ -6,17 +6,20 @@ OpenCode is the algorithm executor; this backend is just a data store.
 
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 from typing import Optional
 from datetime import datetime
 import uuid
 import json
+import asyncio
+import os
 
 import sys
-import os
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from db import database, init_db
+from executor import run_opencode, create_nodes_from_papers, SESSIONS_DIR
 
 app = FastAPI(title="Literature Review Engine API")
 
@@ -168,6 +171,72 @@ async def list_trees():
             "rootCount": len(tree["rootNodes"]),
         })
     return trees
+
+
+# OpenCode Build Endpoint
+
+@app.post("/trees/{tree_id}/build")
+async def build_tree(tree_id: str):
+    """
+    Start OpenCode to autonomously build the citation tree.
+    Returns SSE stream of tool events.
+    """
+    if tree_id not in database["trees"]:
+        raise HTTPException(status_code=404, detail="Tree not found")
+
+    tree = database["trees"][tree_id]
+    topic = tree["topic"]
+
+    async def event_stream():
+        session_dir = os.path.join(SESSIONS_DIR, tree_id)
+
+        # Yield start event
+        yield f"data: {json.dumps({'type': 'start', 'message': f'Starting OpenCode for: {topic}'})}\n\n"
+
+        # Run OpenCode and stream events
+        node_ids = []
+        async for event in run_opencode(tree_id, topic, api_base="http://localhost:8000"):
+            yield f"data: {json.dumps({'type': 'tool', 'tool': event.tool, 'title': event.title, 'status': event.status})}\n\n"
+
+            # If OpenCode completed, create nodes from papers.json
+            if event.tool == "complete":
+                created_ids = await create_nodes_from_papers(tree_id, "http://localhost:8000", session_dir)
+                node_ids = created_ids
+                yield f"data: {json.dumps({'type': 'complete', 'nodeCount': len(created_ids), 'nodeIds': created_ids})}\n\n"
+
+        # Final event with node IDs
+        yield f"data: {json.dumps({'type': 'done', 'nodeCount': len(node_ids)})}\n\n"
+
+    return StreamingResponse(
+        event_stream(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",
+        },
+    )
+
+
+@app.get("/trees/{tree_id}/status")
+async def get_build_status(tree_id: str):
+    """Get the current status of a tree build."""
+    if tree_id not in database["trees"]:
+        raise HTTPException(status_code=404, detail="Tree not found")
+
+    tree = database["trees"][tree_id]
+    session_dir = os.path.join(SESSIONS_DIR, tree_id)
+
+    status = {
+        "treeId": tree_id,
+        "topic": tree["topic"],
+        "nodeCount": len(tree["nodes"]),
+        "rootCount": len(tree["rootNodes"]),
+        "sessionDir": session_dir,
+        "hasPapersFile": os.path.exists(os.path.join(session_dir, "papers.json")),
+    }
+
+    return status
 
 
 # Node Endpoints

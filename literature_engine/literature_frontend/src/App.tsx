@@ -6,6 +6,7 @@ import { LiteratureTree } from './components/LiteratureTree';
 import { NodeTooltip } from './components/NodeTooltip';
 import { Terminal } from './components/Terminal';
 import { useTree, useCreateTree } from './hooks/useTree';
+import { api } from './api/client';
 import type { LiteratureNode } from './types';
 import './App.css';
 
@@ -16,7 +17,7 @@ function AppContent() {
   const [hoveredNode, setHoveredNode] = useState<LiteratureNode | null>(null);
   const [tooltipPos, setTooltipPos] = useState({ x: 0, y: 0 });
 
-  const { data: tree, isLoading } = useTree(treeId);
+  const { data: tree, isLoading, refetch } = useTree(treeId);
   const createTree = useCreateTree();
 
   const handleMouseMove = useCallback((e: React.MouseEvent) => {
@@ -27,7 +28,22 @@ function AppContent() {
     // Create new tree
     const result = await createTree.mutateAsync({ topic });
     setTreeId(result.id);
+
+    // Trigger OpenCode build via API
+    // The Terminal component will connect to SSE stream for progress
+    try {
+      await api.buildTree(result.id);
+    } catch (e) {
+      console.error('Failed to start build:', e);
+    }
   }, [createTree]);
+
+  const handleBuildComplete = useCallback((nodeCount: number) => {
+    // Refetch tree data to show new nodes
+    if (treeId) {
+      refetch();
+    }
+  }, [treeId, refetch]);
 
   const handleNodeHover = useCallback((node: LiteratureNode | null) => {
     setHoveredNode(node);
@@ -64,7 +80,11 @@ function AppContent() {
         </div>
 
         <div className="terminal-panel">
-          <Terminal treeId={treeId} onStartBuild={handleStartBuild} />
+          <Terminal
+            treeId={treeId}
+            onStartBuild={handleStartBuild}
+            onBuildComplete={handleBuildComplete}
+          />
         </div>
       </main>
 

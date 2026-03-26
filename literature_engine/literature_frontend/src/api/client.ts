@@ -42,6 +42,13 @@ export const api = {
   listTrees: () =>
     req<TreeListItem[]>('/trees'),
 
+  // OpenCode build - returns SSE stream, use EventSource on frontend
+  buildTree: (treeId: string) =>
+    req<{ status: string }>(`/trees/${treeId}/build`, { method: 'POST' }),
+
+  getBuildStatus: (treeId: string) =>
+    req<{ treeId: string; topic: string; nodeCount: number; rootCount: number; sessionDir: string; hasPapersFile: boolean }>(`/trees/${treeId}/status`),
+
   // Node operations
   createNode: (treeId: string, body: CreateNodeRequest) =>
     req<LiteratureNode>(`/trees/${treeId}/nodes`, {
