@@ -183,7 +183,7 @@ export default function App() {
                   type="text"
                   value={newSessionTitle}
                   onChange={e => setNewSessionTitle(e.target.value)}
-                  placeholder="fine-tune BERT for sentiment analysis"
+                  placeholder='fine-tune: input=[text], output=[labels], task=[classification]'
                   autoFocus
                   style={{
                     flex: 1,
@@ -195,6 +195,9 @@ export default function App() {
                     fontSize: '14px',
                   }}
                 />
+              </div>
+              <div style={{ fontSize: '10px', color: '#666', marginTop: '6px' }}>
+                Be specific: input (what goes in), output (what comes out), task type
               </div>
             </label>
             <div style={{ display: 'flex', gap: '8px' }}>

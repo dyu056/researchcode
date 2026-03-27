@@ -80,7 +80,7 @@ export interface DataSample {
 }
 
 // Parse block types from Pioneer output
-export type ParseBlockType = 'MODEL' | 'LOSS' | 'COLLECTING' | 'PROCESSING' | 'AGGREGATE' | 'TRAINING'
+export type ParseBlockType = 'CLARIFY' | 'MODEL' | 'LOSS' | 'COLLECTING' | 'PROCESSING' | 'AGGREGATE' | 'TRAINING'
 
 export interface ParseBlock {
   blockType: ParseBlockType

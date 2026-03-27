@@ -6,9 +6,10 @@ import { Ripgrep } from "../../file/ripgrep"
 import { LSP } from "../../lsp"
 import { Instance } from "../../project/instance"
 import { lazy } from "../../util/lazy"
-import { mkdir } from "fs/promises"
+import { mkdir, writeFile } from "fs/promises"
 import { dirname } from "path"
 import { errors } from "../error"
+import { spawn } from "bun"
 
 export const FileRoutes = lazy(() =>
   new Hono()
@@ -226,6 +227,91 @@ export const FileRoutes = lazy(() =>
         try {
           await mkdir(path, { recursive: true })
           return c.json({ success: true, path })
+        } catch (err: any) {
+          return c.json({ success: false, error: err.message }, { status: 400 })
+        }
+      },
+    )
+    .post(
+      "/file",
+      describeRoute({
+        summary: "Write file",
+        description: "Write content to a file at the specified path.",
+        operationId: "file.write",
+        responses: {
+          200: {
+            description: "File written",
+            content: {
+              "application/json": {
+                schema: resolver(z.object({ success: z.boolean(), path: z.string() })),
+              },
+            },
+          },
+          ...errors(400),
+        },
+      }),
+      validator(
+        "json",
+        z.object({
+          path: z.string().describe("The file path to write"),
+          content: z.string().describe("The content to write to the file"),
+        }),
+      ),
+      async (c) => {
+        const { path, content } = c.req.valid("json")
+        try {
+          // Ensure directory exists
+          await mkdir(dirname(path), { recursive: true })
+          await writeFile(path, content, "utf-8")
+          return c.json({ success: true, path })
+        } catch (err: any) {
+          return c.json({ success: false, error: err.message }, { status: 400 })
+        }
+      },
+    )
+    .post(
+      "/exec",
+      describeRoute({
+        summary: "Execute shell command",
+        description: "Execute a shell command on the server. Use with caution - this endpoint can run arbitrary commands.",
+        operationId: "exec.run",
+        responses: {
+          200: {
+            description: "Command output",
+            content: {
+              "application/json": {
+                schema: resolver(z.object({ success: z.boolean(), output: z.string().optional(), error: z.string().optional() })),
+              },
+            },
+          },
+          ...errors(400),
+        },
+      }),
+      validator(
+        "json",
+        z.object({
+          command: z.string().describe("The shell command to execute"),
+          directory: z.string().optional().describe("Working directory for the command"),
+        }),
+      ),
+      async (c) => {
+        const { command, directory } = c.req.valid("json")
+        try {
+          const cwd = directory || process.cwd()
+          const shell = Bun.env.SHELL?.includes("zsh") ? "zsh" : "sh"
+          const proc = spawn({
+            cmd: [shell, "-c", command],
+            cwd,
+            stdout: "pipe",
+            stderr: "pipe",
+          })
+          const output = await new Response(proc.stdout).text()
+          const error = await new Response(proc.stderr).text()
+          const exited = await proc.exited
+          if (exited !== 0) {
+            return c.json({ success: false, output, error }, { status: 400 })
+          }
+          return c.json({ success: true, output })
         } catch (err: any) {
           return c.json({ success: false, error: err.message }, { status: 400 })
         }

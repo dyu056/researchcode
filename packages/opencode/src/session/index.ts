@@ -236,6 +236,7 @@ export namespace Session {
         instruction_prompt: z.string().optional(),
         permission: Info.shape.permission,
         workspaceID: WorkspaceID.zod.optional(),
+        directory: z.string().optional(),
         model: z
           .object({
             apiKey: z.string().optional(),
@@ -249,7 +250,7 @@ export namespace Session {
     async (input) => {
       return createNext({
         parentID: input?.parentID,
-        directory: Instance.directory,
+        directory: input?.directory ?? Instance.directory,
         title: input?.title,
         instructionPrompt: input?.instruction_prompt,
         permission: input?.permission,

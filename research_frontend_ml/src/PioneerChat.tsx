@@ -40,14 +40,15 @@ export function PioneerChat({ serverUrl, sessionId, sessionTitle }: PioneerChatP
 
       // Check if there's a new agent response
       const lastMsg = msgs[msgs.length - 1]
+      // Extract choices when we have a text part with content
+      // This indicates the agent has finished its current response
       if (lastMsg && lastMsg.info.role === 'assistant') {
-        const textContent = lastMsg.parts
-          .filter(p => p.type === 'text')
-          .map(p => p.text)
-          .join('')
+        const textParts = lastMsg.parts.filter(p => p.type === 'text')
+        const textContent = textParts.map(p => p.text).join('')
 
-        // Only show choices if we got a new response
-        if (textContent && textContent !== lastAgentMessageRef.current) {
+        // Only show choices if we got a new complete text response
+        // A "complete" response has meaningful text content (not just whitespace)
+        if (textContent && textContent.trim() && textContent !== lastAgentMessageRef.current) {
           lastAgentMessageRef.current = textContent
           const extractedChoices = extractChoicesFromResponse(textContent)
           setChoices(extractedChoices)
@@ -62,72 +63,47 @@ export function PioneerChat({ serverUrl, sessionId, sessionTitle }: PioneerChatP
 
   // Extract multiple choice options from agent response
   const extractChoicesFromResponse = (text: string): ChoiceOption[] => {
-    // Look for numbered options like "1. Option text" or "2) Option text"
-    const optionRegex = /(?:^|\n)([1-4][.)]\s*)(.+?)(?=\n[1-4][.)]|\n\n|$)/gi
-    const matches = [...text.matchAll(optionRegex)]
+    // Look for [CHOICES] block in the response
+    const choicesBlockRegex = /\[CHOICES\]([\s\S]*?)\[\/CHOICES\]/i
+    const match = text.match(choicesBlockRegex)
 
-    if (matches.length > 0) {
-      return matches.map((match, idx) => ({
-        id: `choice-${idx}`,
-        label: match[2].trim(),
-        value: match[2].trim(),
-      }))
+    if (match && match[1]) {
+      const choicesText = match[1]
+      // Parse numbered options: "1. Label - description" or "1) Label - description"
+      const optionRegex = /(?:^|\n)([1-4][.)]\s*)(.+?)(?=\n[1-4][.)]|\n\n|$)/gi
+      const optionMatches = [...choicesText.matchAll(optionRegex)]
+
+      if (optionMatches.length > 0) {
+        return optionMatches.map((m, idx) => {
+          const label = m[2].trim()
+          return {
+            id: `choice-${idx}`,
+            label: label,
+            value: label,
+          }
+        })
+      }
+
+      // Fallback: parse each line as a choice
+      const lines = choicesText.split('\n').filter(l => l.trim())
+      if (lines.length > 0) {
+        return lines.map((line, idx) => {
+          // Remove leading number/prefix like "1." or "1)"
+          const cleaned = line.replace(/^[1-4][.)]\s*/, '').trim()
+          return {
+            id: `choice-${idx}`,
+            label: cleaned,
+            value: cleaned,
+          }
+        })
+      }
     }
 
-    // Default choices based on context keywords in the message
-    const lowerText = text.toLowerCase()
-
-    if (lowerText.includes('model') || lowerText.includes('bert') || lowerText.includes('gpt')) {
-      return [
-        { id: 'choice-1', label: 'Use the suggested model', value: 'Use the suggested model' },
-        { id: 'choice-2', label: 'Browse other models on HuggingFace', value: 'Browse other models on HuggingFace' },
-        { id: 'choice-3', label: 'Custom model specification', value: 'I want to specify a custom model' },
-        { id: 'custom', label: 'Type your own answer', value: '' },
-      ]
-    }
-
-    if (lowerText.includes('loss') || lowerText.includes('loss function')) {
-      return [
-        { id: 'choice-1', label: 'Use the suggested loss function', value: 'Use the suggested loss function' },
-        { id: 'choice-2', label: 'Modify the loss function', value: 'Modify the loss function parameters' },
-        { id: 'choice-3', label: 'Try a different loss', value: 'Try a different loss function' },
-        { id: 'custom', label: 'Type your own answer', value: '' },
-      ]
-    }
-
-    if (lowerText.includes('data') || lowerText.includes('dataset') || lowerText.includes('sample')) {
-      return [
-        { id: 'choice-1', label: 'Start data collection', value: 'Start data collection with the suggested sources' },
-        { id: 'choice-2', label: 'Add more data sources', value: 'Add more data sources' },
-        { id: 'choice-3', label: 'Upload existing dataset', value: 'Upload my own dataset' },
-        { id: 'custom', label: 'Type your own answer', value: '' },
-      ]
-    }
-
-    if (lowerText.includes('training') || lowerText.includes('train')) {
-      return [
-        { id: 'choice-1', label: 'Start training', value: 'Start training with these parameters' },
-        { id: 'choice-2', label: 'Adjust hyperparameters', value: 'Adjust the hyperparameters' },
-        { id: 'choice-3', label: 'Review training code', value: 'Review the generated training code first' },
-        { id: 'custom', label: 'Type your own answer', value: '' },
-      ]
-    }
-
-    if (lowerText.includes('aggregate') || lowerText.includes('aggregation')) {
-      return [
-        { id: 'choice-1', label: 'Start aggregation', value: 'Start aggregation now' },
-        { id: 'choice-2', label: 'Configure aggregation', value: 'Configure aggregation settings' },
-        { id: 'choice-3', label: 'Pause for now', value: 'Pause aggregation and continue later' },
-        { id: 'custom', label: 'Type your own answer', value: '' },
-      ]
-    }
-
-    // Default generic choices
+    // No [CHOICES] block found - this shouldn't happen if prompt is followed
+    // Return a generic "continue" choice
     return [
-      { id: 'choice-1', label: 'Continue with this approach', value: 'Continue with this approach' },
-      { id: 'choice-2', label: 'Modify the suggestion', value: 'Modify this suggestion' },
-      { id: 'choice-3', label: 'Ask for alternatives', value: 'Show me alternatives' },
-      { id: 'custom', label: 'Type your own answer', value: '' },
+      { id: 'choice-1', label: 'Continue', value: 'Continue' },
+      { id: 'custom', label: 'Type your own response', value: '' },
     ]
   }
 
@@ -187,17 +163,20 @@ export function PioneerChat({ serverUrl, sessionId, sessionTitle }: PioneerChatP
   }
 
   const parseBlocks = (text: string): ParseBlock[] => {
+    // First, remove the [CHOICES] block from the text (it's rendered separately)
+    const textWithoutChoices = text.replace(/\[CHOICES\][\s\S]*?\[\/CHOICES\]/gi, '').trim()
+
     const blocks: ParseBlock[] = []
-    const regex = /\[(MODEL|LOSS|COLLECTING|PROCESSING|AGGREGATE|TRAINING)\]([\s\S]*?)(?=\[(MODEL|LOSS|COLLECTING|PROCESSING|AGGREGATE|TRAINING)\]|$)/gi
+    const regex = /\[(CLARIFY|MODEL|LOSS|COLLECTING|PROCESSING|AGGREGATE|TRAINING)\]([\s\S]*?)(?=\[(CLARIFY|MODEL|LOSS|COLLECTING|PROCESSING|AGGREGATE|TRAINING)\]|$)/gi
 
     let lastIndex = 0
     let match
 
-    while ((match = regex.exec(text)) !== null) {
+    while ((match = regex.exec(textWithoutChoices)) !== null) {
       if (match.index > lastIndex) {
         blocks.push({
           blockType: 'TRAINING',
-          content: text.slice(lastIndex, match.index).trim(),
+          content: textWithoutChoices.slice(lastIndex, match.index).trim(),
         })
       }
       blocks.push({
@@ -207,10 +186,10 @@ export function PioneerChat({ serverUrl, sessionId, sessionTitle }: PioneerChatP
       lastIndex = regex.lastIndex
     }
 
-    if (lastIndex < text.length) {
+    if (lastIndex < textWithoutChoices.length) {
       blocks.push({
         blockType: 'TRAINING',
-        content: text.slice(lastIndex).trim(),
+        content: textWithoutChoices.slice(lastIndex).trim(),
       })
     }
 
@@ -218,6 +197,7 @@ export function PioneerChat({ serverUrl, sessionId, sessionTitle }: PioneerChatP
   }
 
   const blockColors: Record<ParseBlockType, { bg: string; border: string; label: string }> = {
+    CLARIFY: { bg: '#1e3a4f', border: '#06b6d4', label: '❓ CLARIFY' },
     MODEL: { bg: '#1e3a5f', border: '#3b82f6', label: '🤖 MODEL' },
     LOSS: { bg: '#3d1e5f', border: '#a855f7', label: '📉 LOSS' },
     COLLECTING: { bg: '#1e4a3f', border: '#22c55e', label: '📥 COLLECTING' },
